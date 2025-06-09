@@ -40,9 +40,19 @@ export default async function controlRoutes(fastify: FastifyInstance) {
       
       // Sanitize device ID
       commandData.deviceId = sanitizeDeviceId(commandData.deviceId);
-      
-      // Validate command type
-      const allowedCommands = ['led_control', 'sensor_config', 'reboot', 'ping', 'relay_control'];
+        // Validate command type - updated for multi-ESP system
+      const allowedCommands = [
+        // General commands
+        'ping', 'status_request', 'reboot', 'update_config',
+        // Camera commands
+        'cam_start_stream', 'cam_stop_stream', 'cam_take_photo', 
+        'cam_adjust_quality', 'cam_record_start', 'cam_record_stop',
+        // Valve commands
+        'valve_open', 'valve_close', 'valve_toggle', 
+        'valve_set_position', 'valve_get_status', 'valve_emergency_stop',
+        // Legacy commands for backward compatibility
+        'led_control', 'sensor_config', 'relay_control'
+      ];
       if (!allowedCommands.includes(commandData.type)) {
         return reply.status(400).send(createErrorResponse(`Invalid command type. Allowed: ${allowedCommands.join(', ')}`));
       }

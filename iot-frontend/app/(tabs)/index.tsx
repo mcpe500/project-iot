@@ -7,26 +7,56 @@ import {
   Text,
   Dimensions,
   ActivityIndicator,
-  StatusBar
+  StatusBar,
+  ScrollView
 } from 'react-native';
 import { Image } from 'expo-image';
 import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { IconSymbol } from '@/components/ui/IconSymbol';
 import { CONFIG, getWebSocketURL, getHttpURL } from '@/app/config';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+
+interface StreamStats {
+  fps: number;
+  frameCount: number;
+  connectionQuality: 'excellent' | 'good' | 'poor' | 'disconnected';
+  lastFrameTime: number;
+}
+
+interface DeviceStatus {
+  deviceId: string;
+  deviceType: string;
+  status: string;
+  isStreaming?: boolean;
+}
 
 export default function LiveStreamScreen() {
   const [frame, setFrame] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
+  const [streamStats, setStreamStats] = useState<StreamStats>({
+    fps: 0,
+    frameCount: 0,
+    connectionQuality: 'disconnected',
+    lastFrameTime: 0
+  });
+  const [devices, setDevices] = useState<DeviceStatus[]>([]);
+  const [selectedCamera, setSelectedCamera] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const frameCountRef = useRef(0);
+  const lastFpsCalculation = useRef(Date.now());
 
   useEffect(() => {
+    loadDevices();
     connectWebSocket();
+
+    // Update FPS calculation every second
+    const fpsInterval = setInterval(updateFpsStats, 1000);
 
     return () => {
       if (wsRef.current) {
@@ -35,8 +65,55 @@ export default function LiveStreamScreen() {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      clearInterval(fpsInterval);
     };
   }, []);
+
+  const loadDevices = async () => {
+    try {
+      const response = await axios.get(getHttpURL('/api/v1/devices/devices'));
+      if (response.data.success) {
+        const deviceList = response.data.data.devices.map((device: any) => ({
+          deviceId: device.deviceId,
+          deviceType: device.deviceType,
+          status: device.status,
+          isStreaming: device.deviceType === 'camera' && device.status === 'online'
+        }));
+        setDevices(deviceList);
+        
+        // Auto-select first available camera
+        const cameras = deviceList.filter((d: DeviceStatus) => d.deviceType === 'camera' && d.status === 'online');
+        if (cameras.length > 0 && !selectedCamera) {
+          setSelectedCamera(cameras[0].deviceId);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading devices:', error);
+    }
+  };
+
+  const updateFpsStats = () => {
+    const now = Date.now();
+    const timeDiff = now - lastFpsCalculation.current;
+    const currentFps = frameCountRef.current / (timeDiff / 1000);
+    
+    let quality: StreamStats['connectionQuality'] = 'disconnected';
+    if (isConnected) {
+      if (currentFps >= 8) quality = 'excellent';
+      else if (currentFps >= 5) quality = 'good';
+      else if (currentFps >= 1) quality = 'poor';
+    }
+    
+    setStreamStats({
+      fps: Math.round(currentFps * 10) / 10,
+      frameCount: frameCountRef.current,
+      connectionQuality: quality,
+      lastFrameTime: now
+    });
+    
+    frameCountRef.current = 0;
+    lastFpsCalculation.current = now;
+  };
 
   const connectWebSocket = () => {
     try {
@@ -56,8 +133,12 @@ export default function LiveStreamScreen() {
           
           if (data.type === 'frame' && data.data) {
             setFrame(data.data);
+            frameCountRef.current++;
           } else if (data.type === 'connected') {
             console.log('WebSocket connection confirmed:', data.message);
+          } else if (data.type === 'device-status') {
+            // Update device status in real-time
+            loadDevices();
           }
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -115,6 +196,140 @@ export default function LiveStreamScreen() {
       setIsRecording(false);
     }
   };
+
+  const startRecording = async () => {
+    if (!selectedCamera) {
+      Alert.alert('Error', 'No camera selected');
+      return;
+    }
+
+    try {
+      const response = await axios.post(getHttpURL('/api/v1/stream/start-recording'), {
+        cameraId: selectedCamera
+      });
+
+      if (response.data.success) {
+        setIsRecording(true);
+        Alert.alert('Success', 'Recording started');
+      } else {
+        Alert.alert('Error', 'Failed to start recording');
+      }
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      Alert.alert('Error', 'Failed to start recording');
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      const response = await axios.post(getHttpURL('/api/v1/stream/stop-recording'));
+
+      if (response.data.success) {
+        setIsRecording(false);
+        Alert.alert('Success', 'Recording stopped and saved');
+      } else {
+        Alert.alert('Error', 'Failed to stop recording');
+      }
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      Alert.alert('Error', 'Failed to stop recording');
+    }
+  };
+
+  const sendCameraCommand = async (command: string) => {
+    if (!selectedCamera) return;
+
+    try {
+      const response = await axios.post(getHttpURL('/api/v1/control/command'), {
+        deviceId: selectedCamera,
+        command: command
+      });
+
+      if (response.data.success) {
+        Alert.alert('Success', `Command "${command}" sent successfully`);
+      } else {
+        Alert.alert('Error', response.data.error || 'Failed to send command');
+      }
+    } catch (error) {
+      console.error('Error sending command:', error);
+      Alert.alert('Error', 'Failed to send command');
+    }
+  };
+
+  const getQualityColor = (quality: StreamStats['connectionQuality']) => {
+    switch (quality) {
+      case 'excellent': return '#4CAF50';
+      case 'good': return '#8BC34A';
+      case 'poor': return '#FF9800';
+      case 'disconnected': return '#F44336';
+      default: return '#757575';
+    }
+  };
+
+  const renderCameraSelector = () => {
+    const cameras = devices.filter(d => d.deviceType === 'camera');
+    
+    if (cameras.length === 0) {
+      return (
+        <View style={styles.noDevicesContainer}>
+          <ThemedText style={styles.noDevicesText}>No cameras found</ThemedText>
+          <ThemedText style={styles.noDevicesSubtext}>
+            Make sure your ESP32-S3 camera is connected and online
+          </ThemedText>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.cameraSelector}>
+        <ThemedText style={styles.selectorLabel}>Camera:</ThemedText>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.cameraList}>
+          {cameras.map((camera) => (
+            <TouchableOpacity
+              key={camera.deviceId}
+              style={[
+                styles.cameraOption,
+                {
+                  backgroundColor: selectedCamera === camera.deviceId ? '#2196F3' : '#333',
+                  opacity: camera.status === 'online' ? 1 : 0.5
+                }
+              ]}
+              onPress={() => camera.status === 'online' && setSelectedCamera(camera.deviceId)}
+            >
+              <IconSymbol name="camera.fill" size={16} color="#fff" />
+              <Text style={styles.cameraOptionText}>{camera.deviceId}</Text>
+              <View style={[styles.statusDot, { 
+                backgroundColor: camera.status === 'online' ? '#4CAF50' : '#F44336' 
+              }]} />
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderStreamStats = () => (
+    <View style={styles.statsContainer}>
+      <View style={styles.statItem}>
+        <Text style={styles.statValue}>{streamStats.fps}</Text>
+        <Text style={styles.statLabel}>FPS</Text>
+      </View>
+      
+      <View style={styles.statItem}>
+        <View style={[styles.qualityIndicator, { 
+          backgroundColor: getQualityColor(streamStats.connectionQuality) 
+        }]} />
+        <Text style={styles.statLabel}>{streamStats.connectionQuality.toUpperCase()}</Text>
+      </View>
+      
+      {isRecording && (
+        <View style={styles.statItem}>
+          <View style={styles.recordingIndicator} />
+          <Text style={styles.statLabel}>RECORDING</Text>
+        </View>
+      )}
+    </View>
+  );
 
   const getConnectionStatusColor = () => {
     switch (connectionStatus) {
@@ -239,6 +454,90 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  noDevicesContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  noDevicesText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  noDevicesSubtext: {
+    color: '#aaa',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  cameraSelector: {
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  selectorLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  cameraList: {
+    flexDirection: 'row',
+  },
+  cameraOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  cameraOptionText: {
+    color: '#fff',
+    fontSize: 12,
+    marginLeft: 6,
+    marginRight: 6,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    paddingVertical: 8,
+  },
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statValue: {
+    color: '#4CAF50',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  statLabel: {
+    color: '#aaa',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  qualityIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginBottom: 4,
+  },
+  recordingIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#F44336',
+    marginBottom: 4,
   },
   videoContainer: {
     flex: 1,

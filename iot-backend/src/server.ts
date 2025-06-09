@@ -86,6 +86,7 @@ async function buildApp() {
       await fastify.register(require('@/routes/ingest'), { prefix: '/ingest' });
       await fastify.register(require('@/routes/dashboard'), { prefix: '/dashboard' });
       await fastify.register(require('@/routes/control'), { prefix: '/control' });
+      await fastify.register(require('@/routes/devices'), { prefix: '/devices' });
       await fastify.register(require('@/routes/notes'), { prefix: '/dashboard/notes' });
       await fastify.register(require('@/routes/config'), { prefix: '/config' });
       await fastify.register(require('@/routes/gemini'), { prefix: '/ai' });
