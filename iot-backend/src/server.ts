@@ -28,9 +28,8 @@ const envConfig: EnvironmentConfig = {
   API_KEY: process.env.API_KEY!,
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3001',
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
-  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
-  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
-  DATABASE_URL: process.env.DATABASE_URL
+  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+  ...(process.env.DATABASE_URL && { DATABASE_URL: process.env.DATABASE_URL })
 };
 
 async function buildApp() {
@@ -90,6 +89,7 @@ async function buildApp() {
       await fastify.register(require('@/routes/notes'), { prefix: '/dashboard/notes' });
       await fastify.register(require('@/routes/config'), { prefix: '/config' });
       await fastify.register(require('@/routes/gemini'), { prefix: '/ai' });
+      await fastify.register(require('@/routes/stream'), { prefix: '/stream' });
     }, { prefix: '/api/v1' });
 
     // Graceful shutdown
@@ -127,9 +127,7 @@ async function start() {
       port: envConfig.PORT,
       host: envConfig.HOST,
       environment: envConfig.NODE_ENV
-    }, 'IoT Backend Server started successfully');
-
-    // Log available routes in development
+    }, 'IoT Backend Server started successfully');    // Log available routes in development
     if (envConfig.NODE_ENV === 'development') {
       app.log.info('Available routes:');
       app.log.info('  GET    /health');
@@ -148,6 +146,11 @@ async function start() {
       app.log.info('  PUT    /api/v1/control/commands/:id/status');
       app.log.info('  GET    /api/v1/config/media');
       app.log.info('  GET    /api/v1/config/system');
+      app.log.info('  POST   /api/v1/stream/stream');
+      app.log.info('  WS     /api/v1/stream/live');
+      app.log.info('  POST   /api/v1/stream/record');
+      app.log.info('  GET    /api/v1/stream/recordings');
+      app.log.info('  GET    /api/v1/stream/status');
     }
   } catch (error) {
     console.error('Failed to start server:', error);

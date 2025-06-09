@@ -46,11 +46,8 @@ export default async function notesRoutes(fastify: FastifyInstance) {
 
   // POST /api/v1/dashboard/notes
   fastify.post<{
-    Body: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>;
-  }>('/', {
+    Body: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>;  }>('/', {
     schema: {
-      description: 'Create a new note',
-      tags: ['Notes'],
       body: noteCreateSchema,
       response: {
         201: {
@@ -92,11 +89,8 @@ export default async function notesRoutes(fastify: FastifyInstance) {
   // PUT /api/v1/dashboard/notes/:id
   fastify.put<{
     Params: { id: string };
-    Body: Partial<Omit<Note, 'id' | 'createdAt'>>;
-  }>('/:id', {
+    Body: Partial<Omit<Note, 'id' | 'createdAt'>>;  }>('/:id', {
     schema: {
-      description: 'Update an existing note',
-      tags: ['Notes'],
       params: {
         type: 'object',
         properties: {
@@ -135,11 +129,8 @@ export default async function notesRoutes(fastify: FastifyInstance) {
 
   // DELETE /api/v1/dashboard/notes/:id
   fastify.delete<{
-    Params: { id: string };
-  }>('/:id', {
+    Params: { id: string };  }>('/:id', {
     schema: {
-      description: 'Delete a note',
-      tags: ['Notes'],
       params: {
         type: 'object',
         properties: {
