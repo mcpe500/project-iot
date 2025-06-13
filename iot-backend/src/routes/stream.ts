@@ -42,16 +42,12 @@ const frameBuffer = new FrameBuffer();
 // Set to store WebSocket connections for live streaming
 const liveViewers = new Set<any>();
 
-const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
-  // Register multipart support for this route
+const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  // Register multipart support for this route
   await fastify.register(require('@fastify/multipart'), {
     limits: {
       fileSize: 5 * 1024 * 1024, // 5MB max file size
     }
   });
-
-  // Register WebSocket support
-  await fastify.register(require('@fastify/websocket'));
 
   // POST /stream - Receive frames from ESP32
   fastify.post('/stream', {
@@ -68,21 +64,46 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
       }
     }  }, async (request, reply) => {
     try {
+      // Log incoming request details for debugging
+      fastify.log.info('Incoming stream request:', {
+        contentType: request.headers['content-type'],
+        contentLength: request.headers['content-length'],
+        userAgent: request.headers['user-agent'],
+        apiKey: request.headers['x-api-key']
+      });
+
       const data = await (request as any).file();
       
-      if (!data || data.fieldname !== 'image') {
-        return reply.code(400).send(createErrorResponse('No image file found in request'));
+      if (!data) {
+        fastify.log.error('No file data received in multipart request');
+        return reply.code(400).send(createErrorResponse('No file data found in request'));
+      }
+
+      if (data.fieldname !== 'image') {
+        fastify.log.error(`Wrong fieldname received: "${data.fieldname}", expected "image"`);
+        return reply.code(400).send(createErrorResponse(`Expected fieldname 'image', got '${data.fieldname}'`));
       }
 
       // Read the file buffer
       const buffer = await data.toBuffer();
       
       if (buffer.length === 0) {
+        fastify.log.error('Empty file buffer received');
         return reply.code(400).send(createErrorResponse('Empty file received'));
       }
 
+      // Log successful frame reception
+      fastify.log.debug(`Frame received successfully. Size: ${buffer.length} bytes, MIME: ${data.mimetype}`);
+
+      // Auto-register device if not already registered (for backward compatibility)
+      const userAgent = request.headers['user-agent'] as string;
+      if (userAgent && userAgent.includes('ESP32')) {
+        const deviceId = extractDeviceIdFromUserAgent(userAgent) || 'ESP32-CAM-UNKNOWN';
+        await autoRegisterDevice(fastify, deviceId, request.ip);
+      }
+
       // Add frame to circular buffer
-      frameBuffer.addFrame(buffer);      // Broadcast frame to all connected WebSocket clients
+      frameBuffer.addFrame(buffer);// Broadcast frame to all connected WebSocket clients
       const base64Frame = buffer.toString('base64');
       liveViewers.forEach((ws) => {
         if ((ws as any).readyState === 1) { // WebSocket.OPEN
@@ -352,5 +373,49 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
     }));
   });
 };
+
+// Helper functions for device auto-registration
+function extractDeviceIdFromUserAgent(userAgent: string): string | null {
+  // Try to extract device ID from User-Agent header
+  const match = userAgent.match(/ESP32[_-]?([A-Z0-9_-]+)/i);
+  return match ? `ESP32-${match[1]}` : null;
+}
+
+async function autoRegisterDevice(fastify: any, deviceId: string, ipAddress: string) {
+  try {
+    // Check if device is already registered by making an internal call
+    const existingDevice = await checkDeviceExists(deviceId);
+    
+    if (!existingDevice) {
+      fastify.log.info(`Auto-registering device: ${deviceId} from ${ipAddress}`);
+      
+      // Create device registration payload
+      const deviceData = {
+        deviceId,
+        deviceName: `Auto-registered ${deviceId}`,
+        deviceType: 'camera' as const,
+        ipAddress,
+        capabilities: ['streaming', 'auto-registered']
+      };
+      
+      // Register device internally
+      await registerDeviceInternally(deviceData);
+    }
+  } catch (error) {
+    fastify.log.error({ error, deviceId }, 'Failed to auto-register device');
+  }
+}
+
+async function checkDeviceExists(deviceId: string): Promise<boolean> {
+  // This is a placeholder - in a real implementation, you'd check your device registry
+  // For now, we'll assume devices need to be registered via the API
+  return false;
+}
+
+async function registerDeviceInternally(deviceData: any): Promise<void> {
+  // This is a placeholder for internal device registration
+  // In a real implementation, you'd call your device registration service
+  console.log(`Would register device: ${JSON.stringify(deviceData)}`);
+}
 
 export default streamRoutes;

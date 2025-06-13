@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { config } from 'dotenv';
 import { validateEnvironment, parseCorsOrigins, createSuccessResponse } from '@/utils/helpers';
 import type { EnvironmentConfig } from '@/types';
+import { createSshTunnel } from '@/job/tunnel';
 
 // Load environment variables
 config();
@@ -116,6 +117,8 @@ async function buildApp() {
 }
 
 async function start() {
+  let sshClient: any = null;
+  
   try {
     const app = await buildApp();
     
@@ -128,7 +131,61 @@ async function start() {
       port: envConfig.PORT,
       host: envConfig.HOST,
       environment: envConfig.NODE_ENV
-    }, 'IoT Backend Server started successfully');    // Log available routes in development
+    }, 'IoT Backend Server started successfully');
+
+    // Initialize SSH reverse tunnel if configured
+    if (process.env.PUBLIC_VPS_IP) {
+      app.log.info('Initializing SSH reverse tunnel...');
+      try {
+        sshClient = createSshTunnel(
+          envConfig.PORT, // Use the server's port as the private server port
+          parseInt(process.env.PUBLIC_PORT || '9001', 10),
+          process.env.SSH_USER || 'user',
+          process.env.PUBLIC_VPS_IP,
+          process.env.SSH_PASSWORD,
+          process.env.SSH_PRIVATE_KEY_PATH,
+          process.env.SSH_PASSPHRASE
+        );
+        
+        if (sshClient) {
+          app.log.info({
+            localPort: envConfig.PORT,
+            remotePort: process.env.PUBLIC_PORT || '9001',
+            vpsIp: process.env.PUBLIC_VPS_IP
+          }, 'SSH reverse tunnel initiated successfully');
+        } else {
+          app.log.warn('SSH reverse tunnel could not be established - check configuration');
+        }
+      } catch (tunnelError) {
+        app.log.error({ error: tunnelError }, 'Failed to initialize SSH tunnel');
+      }
+    } else {
+      app.log.info('SSH tunnel not configured (PUBLIC_VPS_IP not set)');
+    }
+
+    // Update graceful shutdown to include SSH tunnel cleanup
+    const gracefulShutdown = async (signal: string) => {
+      app.log.info(`Received ${signal}, shutting down gracefully`);
+      try {
+        // Close SSH tunnel first
+        if (sshClient) {
+          app.log.info('Closing SSH tunnel...');
+          sshClient.end();
+        }
+        
+        await app.close();
+        process.exit(0);
+      } catch (error) {
+        app.log.error({ error }, 'Error during shutdown');
+        process.exit(1);
+      }
+    };
+
+    // Override the existing signal handlers
+    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('SIGINT');
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));// Log available routes in development
     if (envConfig.NODE_ENV === 'development') {
       app.log.info('Available routes:');
       app.log.info('  GET    /health');
