@@ -1,67 +1,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import { dataService, type DeviceInfo } from '@/services/dataService';
 
-// Device registry for multi-ESP system
-interface DeviceInfo {
-  deviceId: string;
-  deviceName: string;
-  deviceType: 'camera' | 'valve' | 'master';
-  status: 'online' | 'offline' | 'error' | 'maintenance';
-  ipAddress: string;
-  lastHeartbeat: number;
-  uptime: number;
-  freeHeap: number;
-  wifiRssi?: number;
-  errorCount: number;
-  capabilities?: string[];
-}
-
-interface SystemStatus {
-  devicesOnline: number;
-  devicesTotal: number;
-  systemUptime: number;
-  totalCommandsSent: number;
-  totalCommandsFailed: number;
-  backendConnected: boolean;
-  lastBackendSync: number;
-  systemLoad: number;
-}
-
-// In-memory device registry (in production, use database)
-const deviceRegistry = new Map<string, DeviceInfo>();
-let systemStatus: SystemStatus = {
-  devicesOnline: 0,
-  devicesTotal: 0,
-  systemUptime: Date.now(),
-  totalCommandsSent: 0,
-  totalCommandsFailed: 0,
-  backendConnected: true,
-  lastBackendSync: Date.now(),
-  systemLoad: 0
-};
-
-// Background task to mark stale devices as offline
-setInterval(() => {
-  const now = Date.now();
-  const staleThreshold = 2 * 60 * 1000; // 2 minutes
-  
-  for (const [deviceId, device] of deviceRegistry.entries()) {
-    if (now - device.lastHeartbeat > staleThreshold && device.status === 'online') {
-      device.status = 'offline';
-      deviceRegistry.set(deviceId, device);
-      console.log(`Device ${deviceId} marked as offline due to stale heartbeat`);
-    }
-  }
-  
-  // Update system status
-  systemStatus.devicesOnline = Array.from(deviceRegistry.values()).filter(d => d.status === 'online').length;
-  systemStatus.devicesTotal = deviceRegistry.size;
-}, 30000); // Check every 30 seconds
-
-export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /api/v1/devices/devices - List all devices
+export default async function deviceRoutes(fastify: FastifyInstance) {
+  // GET /api/v1/devices/devices - List all devices
   fastify.get('/devices', async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const devices = Array.from(deviceRegistry.values());
+      const devices = dataService.getAllDevices();
+      const systemStatus = dataService.getSystemStatus();
       
       fastify.log.info(`Returning ${devices.length} devices`);
       
@@ -81,7 +27,7 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
   }>('/devices/:deviceId', async (request: FastifyRequest<{ Params: { deviceId: string } }>, reply: FastifyReply) => {
     try {
       const { deviceId } = request.params;
-      const device = deviceRegistry.get(deviceId);
+      const device = dataService.getDevice(deviceId);
       
       if (!device) {
         return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found`));
@@ -102,7 +48,8 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
       deviceType: 'camera' | 'valve' | 'master';
       ipAddress: string;
       capabilities?: string[];
-    }  }>('/devices/register', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
+    }
+  }>('/devices/register', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
     try {
       const body = request.body as any;
       const { deviceId, deviceName, deviceType, ipAddress, capabilities = [] } = body;
@@ -125,7 +72,7 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
         capabilities
       };
       
-      deviceRegistry.set(deviceId, device);
+      await dataService.setDevice(deviceId, device);
       
       fastify.log.info(`Device registered: ${deviceName} (${deviceId}) at ${ipAddress}`);
       
@@ -147,7 +94,8 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
       uptime?: number;
       freeHeap?: number;
       wifiRssi?: number;
-    }  }>('/devices/heartbeat', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
+    }
+  }>('/devices/heartbeat', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
     try {
       const body = request.body as any;
       const { deviceId, status, uptime, freeHeap, wifiRssi } = body;
@@ -156,7 +104,7 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
         return reply.status(400).send(createErrorResponse('deviceId is required'));
       }
       
-      let device = deviceRegistry.get(deviceId);
+      let device = dataService.getDevice(deviceId);
       if (!device) {
         fastify.log.warn(`Heartbeat for unregistered device: ${deviceId}`);
         return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found. Please register first.`));
@@ -169,7 +117,7 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
       if (freeHeap !== undefined) device.freeHeap = freeHeap;
       if (wifiRssi !== undefined) device.wifiRssi = wifiRssi;
       
-      deviceRegistry.set(deviceId, device);
+      await dataService.setDevice(deviceId, device);
       
       fastify.log.debug(`Heartbeat updated for device: ${deviceId}`);
       
@@ -182,13 +130,11 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
       return reply.status(500).send(createErrorResponse('Failed to update heartbeat'));
     }
   });
+
   // GET /api/v1/devices/system/status - Get system status
   fastify.get('/system/status', async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      // Update real-time stats
-      systemStatus.devicesOnline = Array.from(deviceRegistry.values()).filter(d => d.status === 'online').length;
-      systemStatus.devicesTotal = deviceRegistry.size;
-      systemStatus.lastBackendSync = Date.now();
+      const systemStatus = dataService.getSystemStatus();
       
       return reply.send(createSuccessResponse({
         systemStatus,
@@ -207,11 +153,11 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
     try {
       const { deviceId } = request.params;
       
-      if (!deviceRegistry.has(deviceId)) {
+      if (!dataService.deviceExists(deviceId)) {
         return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found`));
       }
       
-      deviceRegistry.delete(deviceId);
+      await dataService.deleteDevice(deviceId);
       
       fastify.log.info(`Device unregistered: ${deviceId}`);
       
@@ -225,28 +171,17 @@ export default async function deviceRoutes(fastify: FastifyInstance) {  // GET /
   });
 }
 
-// Export function to get device registry (for use in other routes)
-export function getDeviceRegistry(): Map<string, DeviceInfo> {
-  return deviceRegistry;
+// Export function to get device (for use in other routes)
+export function getDevice(deviceId: string): DeviceInfo | undefined {
+  return dataService.getDevice(deviceId);
+}
+
+// Export function to check if device exists (for use in other routes)
+export function deviceExists(deviceId: string): boolean {
+  return dataService.deviceExists(deviceId);
 }
 
 // Export function to register device automatically (for stream route)
-export function autoRegisterDevice(deviceId: string, ipAddress: string): DeviceInfo {
-  const device: DeviceInfo = {
-    deviceId,
-    deviceName: `Auto-registered ${deviceId}`,
-    deviceType: 'camera',
-    status: 'online',
-    ipAddress,
-    lastHeartbeat: Date.now(),
-    uptime: 0,
-    freeHeap: 0,
-    errorCount: 0,
-    capabilities: ['streaming', 'auto-registered']
-  };
-  
-  deviceRegistry.set(deviceId, device);
-  console.log(`Auto-registered device: ${deviceId} from ${ipAddress}`);
-  
-  return device;
+export async function autoRegisterDevice(deviceId: string, ipAddress: string): Promise<DeviceInfo> {
+  return await dataService.autoRegisterDevice(deviceId, ipAddress);
 }

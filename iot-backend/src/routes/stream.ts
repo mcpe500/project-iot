@@ -2,6 +2,8 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import { dataService } from '@/services/dataService';
+import { autoRegisterDevice, deviceExists } from '@/routes/devices';
 
 // In-memory circular buffer to store frames (30 seconds at 10 FPS = 300 frames)
 class FrameBuffer {
@@ -90,16 +92,24 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
       if (buffer.length === 0) {
         fastify.log.error('Empty file buffer received');
         return reply.code(400).send(createErrorResponse('Empty file received'));
-      }
-
-      // Log successful frame reception
+      }      // Log successful frame reception
       fastify.log.debug(`Frame received successfully. Size: ${buffer.length} bytes, MIME: ${data.mimetype}`);
 
       // Auto-register device if not already registered (for backward compatibility)
       const userAgent = request.headers['user-agent'] as string;
       if (userAgent && userAgent.includes('ESP32')) {
         const deviceId = extractDeviceIdFromUserAgent(userAgent) || 'ESP32-CAM-UNKNOWN';
-        await autoRegisterDevice(fastify, deviceId, request.ip);
+        if (!deviceExists(deviceId)) {
+          await autoRegisterDevice(deviceId, request.ip);
+        }
+      }
+
+      // Save image to data folder for persistence
+      try {
+        const deviceId = extractDeviceIdFromUserAgent(userAgent || '') || 'ESP32-CAM-UNKNOWN';
+        await dataService.saveImage(deviceId, buffer, data.mimetype);
+      } catch (saveError) {
+        fastify.log.warn({ error: saveError }, 'Failed to save image to data folder');
       }
 
       // Add frame to circular buffer
@@ -135,7 +145,7 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
     }
   });  // GET /live - WebSocket endpoint for live streaming
   fastify.register(async function (fastify) {
-    fastify.get('/live', { websocket: true }, (connection, _request) => {
+    fastify.get('/live', { websocket: true } as any, (connection: any, _request: any) => {
       fastify.log.info('New WebSocket client connected for live stream');
       
       // Add connection to live viewers
@@ -179,7 +189,6 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
       });
     });
   });
-
   // POST /record - Save last 30 seconds of footage
   fastify.post('/record', {
     schema: {
@@ -196,7 +205,8 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
                 recordingId: { type: 'string' },
                 frameCount: { type: 'number' }
               }
-            }          }
+            }
+          }
         }
       }
     }
@@ -212,22 +222,8 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
       const now = new Date();
       const recordingId = `recording_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
       
-      // Create recordings directory if it doesn't exist
-      const recordingsDir = path.join(process.cwd(), 'recordings');
-      const recordingPath = path.join(recordingsDir, recordingId);
-      
-      await fs.mkdir(recordingsDir, { recursive: true });
-      await fs.mkdir(recordingPath, { recursive: true });
-
-      // Save each frame as a JPEG file
-      const savePromises = frames.map(async (frame, index) => {
-        const frameNumber = String(index + 1).padStart(3, '0');
-        const filename = `frame_${frameNumber}.jpg`;
-        const filePath = path.join(recordingPath, filename);
-        await fs.writeFile(filePath, frame);
-      });
-
-      await Promise.all(savePromises);
+      // Use data service to save recording
+      await dataService.saveRecording('ESP32-CAM-MAIN', frames, recordingId);
 
       fastify.log.info(`Recording saved: ${recordingId} with ${frames.length} frames`);
 
@@ -243,7 +239,6 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
       return reply.code(500).send(createErrorResponse('Internal server error saving recording'));
     }
   });
-
   // GET /recordings - List all available recordings
   fastify.get('/recordings', {
     schema: {
@@ -257,54 +252,20 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
               items: {
                 type: 'object',
                 properties: {
-                  id: { type: 'string' },
-                  name: { type: 'string' },
-                  frameCount: { type: 'number' },
-                  createdAt: { type: 'string' },
-                  size: { type: 'number' }
+                  recordingId: { type: 'string' },
+                  deviceId: { type: 'string' },
+                  timestamp: { type: 'string' },
+                  frameCount: { type: 'number' }
                 }
               }
             }
           }
-        }      }
-    }
-  }, async (_request, reply) => {
-    try {
-      const recordingsDir = path.join(process.cwd(), 'recordings');
-      
-      try {
-        const recordings = await fs.readdir(recordingsDir);
-        
-        const recordingDetails = await Promise.all(
-          recordings.map(async (recordingName) => {
-            const recordingPath = path.join(recordingsDir, recordingName);
-            const stats = await fs.stat(recordingPath);
-            
-            if (stats.isDirectory()) {
-              const files = await fs.readdir(recordingPath);
-              const frameFiles = files.filter(file => file.startsWith('frame_') && file.endsWith('.jpg'));
-              
-              return {
-                id: recordingName,
-                name: recordingName,
-                frameCount: frameFiles.length,
-                createdAt: stats.mtime.toISOString(),
-                size: stats.size
-              };
-            }
-            return null;
-          })
-        );
-
-        const validRecordings = recordingDetails.filter(Boolean);
-        
-        return reply.send(createSuccessResponse(validRecordings));
-        
-      } catch (readError) {
-        // Recordings directory doesn't exist yet
-        return reply.send(createSuccessResponse([]));
+        }
       }
-
+    }  }, async (_request, reply) => {
+    try {
+      const recordings = await dataService.getRecordings();
+      return reply.send(createSuccessResponse(recordings));
     } catch (error) {
       fastify.log.error({ error }, 'Error listing recordings');
       return reply.code(500).send(createErrorResponse('Internal server error listing recordings'));
@@ -322,13 +283,12 @@ const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  
           frameNumber: { type: 'string' }
         }
       }
-    }
-  }, async (request, reply) => {
+    }  }, async (request, reply) => {
     try {
       const { id, frameNumber } = request.params as { id: string; frameNumber: string };
       
-      const recordingPath = path.join(process.cwd(), 'recordings', id);
-      const framePath = path.join(recordingPath, `frame_${frameNumber.padStart(3, '0')}.jpg`);
+      const recordingPath = path.join(dataService.getRecordingsDir(), id);
+      const framePath = path.join(recordingPath, `frame_${frameNumber.padStart(4, '0')}.jpg`);
       
       try {
         const frameBuffer = await fs.readFile(framePath);
@@ -379,43 +339,6 @@ function extractDeviceIdFromUserAgent(userAgent: string): string | null {
   // Try to extract device ID from User-Agent header
   const match = userAgent.match(/ESP32[_-]?([A-Z0-9_-]+)/i);
   return match ? `ESP32-${match[1]}` : null;
-}
-
-async function autoRegisterDevice(fastify: any, deviceId: string, ipAddress: string) {
-  try {
-    // Check if device is already registered by making an internal call
-    const existingDevice = await checkDeviceExists(deviceId);
-    
-    if (!existingDevice) {
-      fastify.log.info(`Auto-registering device: ${deviceId} from ${ipAddress}`);
-      
-      // Create device registration payload
-      const deviceData = {
-        deviceId,
-        deviceName: `Auto-registered ${deviceId}`,
-        deviceType: 'camera' as const,
-        ipAddress,
-        capabilities: ['streaming', 'auto-registered']
-      };
-      
-      // Register device internally
-      await registerDeviceInternally(deviceData);
-    }
-  } catch (error) {
-    fastify.log.error({ error, deviceId }, 'Failed to auto-register device');
-  }
-}
-
-async function checkDeviceExists(deviceId: string): Promise<boolean> {
-  // This is a placeholder - in a real implementation, you'd check your device registry
-  // For now, we'll assume devices need to be registered via the API
-  return false;
-}
-
-async function registerDeviceInternally(deviceData: any): Promise<void> {
-  // This is a placeholder for internal device registration
-  // In a real implementation, you'd call your device registration service
-  console.log(`Would register device: ${JSON.stringify(deviceData)}`);
 }
 
 export default streamRoutes;

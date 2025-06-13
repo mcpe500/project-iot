@@ -3,6 +3,7 @@ import { config } from 'dotenv';
 import { validateEnvironment, parseCorsOrigins, createSuccessResponse } from '@/utils/helpers';
 import type { EnvironmentConfig } from '@/types';
 import { createSshTunnel } from '@/job/tunnel';
+import { dataService } from '@/services/dataService';
 
 // Load environment variables
 config();
@@ -120,6 +121,9 @@ async function start() {
   let sshClient: any = null;
   
   try {
+    // Initialize data service first
+    await dataService.initialize();
+    
     const app = await buildApp();
     
     await app.listen({
