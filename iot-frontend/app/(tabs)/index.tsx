@@ -11,7 +11,7 @@ import {
   ScrollView
 } from 'react-native';
 import { Image } from 'expo-image';
-import axios from 'axios';
+import api from '@/services/api';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
@@ -52,6 +52,27 @@ export default function LiveStreamScreen() {
   const lastFpsCalculation = useRef(Date.now());
 
   useEffect(() => {
+    // Log startup configuration
+    console.log('🚀 Live Stream App Starting...', {
+      backendUrl: CONFIG.BACKEND_URL,
+      wsUrl: CONFIG.WS_URL,
+      apiKey: CONFIG.API_KEY ? 'SET' : 'NOT SET',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Validate configuration
+    if (!CONFIG.API_KEY) {
+      console.error('❌ API_KEY not configured!');
+      setConnectionStatus('Configuration Error');
+      return;
+    }
+    
+    if (!CONFIG.BACKEND_URL || !CONFIG.WS_URL) {
+      console.error('❌ Backend URLs not configured!');
+      setConnectionStatus('Configuration Error');
+      return;
+    }
+    
     loadDevices();
     connectWebSocket();
 
@@ -59,6 +80,7 @@ export default function LiveStreamScreen() {
     const fpsInterval = setInterval(updateFpsStats, 1000);
 
     return () => {
+      console.log('🛑 Live Stream App cleaning up...');
       if (wsRef.current) {
         wsRef.current.close();
       }
@@ -71,7 +93,15 @@ export default function LiveStreamScreen() {
 
   const loadDevices = async () => {
     try {
-      const response = await axios.get(getHttpURL('/api/v1/devices/devices'));
+      console.log('📱 Loading devices from API...');
+      const response = await api.get('/api/v1/devices/devices');
+      
+      console.log('📊 Devices API response:', {
+        success: response.data.success,
+        deviceCount: response.data.data?.devices?.length || 0,
+        status: response.status
+      });
+      
       if (response.data.success) {
         const deviceList = response.data.data.devices.map((device: any) => ({
           deviceId: device.deviceId,
@@ -79,16 +109,32 @@ export default function LiveStreamScreen() {
           status: device.status,
           isStreaming: device.deviceType === 'camera' && device.status === 'online'
         }));
+        
+        console.log('📋 Processed device list:', deviceList.map((d: DeviceStatus) => ({
+          id: d.deviceId,
+          type: d.deviceType,
+          status: d.status,
+          streaming: d.isStreaming
+        })));
+        
         setDevices(deviceList);
         
         // Auto-select first available camera
         const cameras = deviceList.filter((d: DeviceStatus) => d.deviceType === 'camera' && d.status === 'online');
+        console.log(`📹 Found ${cameras.length} online cameras`);
+        
         if (cameras.length > 0 && !selectedCamera) {
+          console.log(`🎯 Auto-selecting camera: ${cameras[0].deviceId}`);
           setSelectedCamera(cameras[0].deviceId);
         }
+      } else {
+        console.warn('⚠️ API returned success=false for devices');
       }
     } catch (error) {
-      console.error('Error loading devices:', error);
+      console.error('❌ Error loading devices:', {
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString()
+      });
     }
   };
 
@@ -111,60 +157,156 @@ export default function LiveStreamScreen() {
       lastFrameTime: now
     });
     
+    // Log FPS stats periodically (every 10 seconds when frames are being received)
+    if (frameCountRef.current > 0 && Math.floor(now / 10000) !== Math.floor(lastFpsCalculation.current / 10000)) {
+      console.log('📊 Stream Stats Update:', {
+        fps: Math.round(currentFps * 10) / 10,
+        totalFrames: frameCountRef.current,
+        quality,
+        connected: isConnected,
+        timeDiff
+      });
+    }
+    
     frameCountRef.current = 0;
     lastFpsCalculation.current = now;
   };
 
   const connectWebSocket = () => {
     try {
+      console.log('🔌 Starting WebSocket connection...');
       setConnectionStatus('Connecting...');
-      const ws = new WebSocket(getWebSocketURL('/api/v1/stream/live'));
+      
+      // Include API key in WebSocket URL as query parameter
+      const wsUrl = `${getWebSocketURL('/api/v1/stream/live')}?apiKey=${CONFIG.API_KEY}`;
+      console.log('🌐 WebSocket connection details:', {
+        url: wsUrl,
+        baseWsUrl: CONFIG.WS_URL,
+        endpoint: '/api/v1/stream/live',
+        apiKey: CONFIG.API_KEY,
+        timestamp: new Date().toISOString()
+      });
+      
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('✅ WebSocket connected successfully!');
         setIsConnected(true);
         setConnectionStatus('Connected');
+        
+        // Send authentication message
+        const authMessage = {
+          type: 'auth',
+          apiKey: CONFIG.API_KEY,
+          timestamp: Date.now()
+        };
+        console.log('🔐 Sending WebSocket auth message:', authMessage);
+        ws.send(JSON.stringify(authMessage));
       };
 
       ws.onmessage = (event) => {
         try {
+          console.log('📨 WebSocket message received:', {
+            dataLength: event.data.length,
+            timestamp: new Date().toISOString()
+          });
+          
           const data = JSON.parse(event.data);
+          console.log('📦 Parsed WebSocket data:', {
+            type: data.type,
+            hasData: !!data.data,
+            dataSize: data.data ? data.data.length : 0
+          });
           
           if (data.type === 'frame' && data.data) {
             setFrame(data.data);
             frameCountRef.current++;
+            console.log(`🎥 Frame received #${frameCountRef.current}, size: ${data.data.length} chars`);
           } else if (data.type === 'connected') {
-            console.log('WebSocket connection confirmed:', data.message);
+            console.log('✅ WebSocket connection confirmed:', data.message);
           } else if (data.type === 'device-status') {
-            // Update device status in real-time
+            console.log('📱 Device status update received');
             loadDevices();
+          } else if (data.type === 'auth-success') {
+            console.log('🔐 WebSocket authentication successful');
+          } else if (data.type === 'auth-error') {
+            console.error('🚫 WebSocket authentication failed:', data.message);
+          } else {
+            console.log('❓ Unknown WebSocket message type:', data.type);
           }
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+          console.error('❌ Error parsing WebSocket message:', {
+            error: error instanceof Error ? error.message : String(error),
+            rawData: event.data.substring(0, 100)
+          });
         }
       };
 
       ws.onclose = (event) => {
-        console.log('WebSocket disconnected:', event.code, event.reason);
+        console.log('🔌 WebSocket disconnected:', {
+          code: event.code,
+          reason: event.reason || 'No reason provided',
+          wasClean: event.wasClean,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Log common close codes with explanations
+        const closeCodeExplanations: { [key: number]: string } = {
+          1000: 'Normal closure',
+          1001: 'Going away',
+          1002: 'Protocol error', 
+          1003: 'Unsupported data',
+          1006: 'Abnormal closure (no close frame)',
+          1011: 'Server error',
+          1012: 'Service restart',
+          1013: 'Try again later',
+          1014: 'Bad gateway',
+          1015: 'TLS handshake failure'
+        };
+        
+        if (closeCodeExplanations[event.code]) {
+          console.log(`📝 Close code meaning: ${closeCodeExplanations[event.code]}`);
+        }
+        
         setIsConnected(false);
         setConnectionStatus('Disconnected');
         
-        // Attempt to reconnect after 3 seconds
+        // Attempt to reconnect after delay
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('Attempting to reconnect...');
+          console.log('🔄 Attempting to reconnect WebSocket...');
           connectWebSocket();
         }, CONFIG.RECONNECT_DELAY_MS) as any;
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error('❌ WebSocket error occurred:', {
+          error: error,
+          timestamp: new Date().toISOString(),
+          readyState: ws.readyState,
+          url: `${getWebSocketURL('/api/v1/stream/live')}?apiKey=${CONFIG.API_KEY}`
+        });
+        
+        // Log WebSocket ready states for debugging
+        const readyStateNames = {
+          0: 'CONNECTING',
+          1: 'OPEN', 
+          2: 'CLOSING',
+          3: 'CLOSED'
+        };
+        
+        console.log(`🔍 WebSocket ready state: ${readyStateNames[ws.readyState as keyof typeof readyStateNames]} (${ws.readyState})`);
+        
         setIsConnected(false);
         setConnectionStatus('Connection Error');
       };
 
     } catch (error) {
-      console.error('Error creating WebSocket:', error);
+      console.error('❌ Error creating WebSocket connection:', {
+        error: error instanceof Error ? error.message : String(error),
+        intendedUrl: `${getWebSocketURL('/api/v1/stream/live')}?apiKey=${CONFIG.API_KEY}`,
+        timestamp: new Date().toISOString()
+      });
       setConnectionStatus('Connection Error');
     }
   };
@@ -173,21 +315,33 @@ export default function LiveStreamScreen() {
     if (isRecording) return;
 
     try {
+      console.log('💾 Starting to save recording...');
       setIsRecording(true);
       
-      const response = await axios.post(getHttpURL('/api/v1/stream/record'));
+      const response = await api.post('/api/v1/stream/record');
+      
+      console.log('📼 Recording save response:', {
+        success: response.data.success,
+        recordingId: response.data.data?.recordingId,
+        frameCount: response.data.data?.frameCount
+      });
       
       if (response.data.success) {
+        console.log('✅ Recording saved successfully');
         Alert.alert(
           'Recording Saved',
           `Recording has been saved successfully!\n\nRecording ID: ${response.data.data.recordingId}\nFrames: ${response.data.data.frameCount}`,
           [{ text: 'OK' }]
         );
       } else {
+        console.warn('⚠️ Recording save failed - API returned success=false');
         Alert.alert('Error', 'Failed to save recording');
       }
     } catch (error) {
-      console.error('Error saving recording:', error);
+      console.error('❌ Error saving recording:', {
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString()
+      });
       Alert.alert(
         'Error', 
         'Failed to save recording. Please check your connection to the backend server.'
@@ -204,7 +358,7 @@ export default function LiveStreamScreen() {
     }
 
     try {
-      const response = await axios.post(getHttpURL('/api/v1/stream/start-recording'), {
+      const response = await api.post('/api/v1/stream/start-recording', {
         cameraId: selectedCamera
       });
 
@@ -222,7 +376,7 @@ export default function LiveStreamScreen() {
 
   const stopRecording = async () => {
     try {
-      const response = await axios.post(getHttpURL('/api/v1/stream/stop-recording'));
+      const response = await api.post('/api/v1/stream/stop-recording');
 
       if (response.data.success) {
         setIsRecording(false);
@@ -237,21 +391,44 @@ export default function LiveStreamScreen() {
   };
 
   const sendCameraCommand = async (command: string) => {
-    if (!selectedCamera) return;
+    if (!selectedCamera) {
+      console.warn('⚠️ No camera selected for command');
+      return;
+    }
 
     try {
-      const response = await axios.post(getHttpURL('/api/v1/control/command'), {
+      console.log('📤 Sending camera command:', {
+        command,
+        deviceId: selectedCamera,
+        timestamp: new Date().toISOString()
+      });
+      
+      const response = await api.post('/api/v1/control/command', {
         deviceId: selectedCamera,
         command: command
       });
 
+      console.log('📨 Command response:', {
+        success: response.data.success,
+        error: response.data.error,
+        deviceId: selectedCamera,
+        command
+      });
+
       if (response.data.success) {
+        console.log('✅ Command sent successfully');
         Alert.alert('Success', `Command "${command}" sent successfully`);
       } else {
+        console.warn('⚠️ Command failed:', response.data.error);
         Alert.alert('Error', response.data.error || 'Failed to send command');
       }
     } catch (error) {
-      console.error('Error sending command:', error);
+      console.error('❌ Error sending command:', {
+        error: error instanceof Error ? error.message : String(error),
+        command,
+        deviceId: selectedCamera,
+        timestamp: new Date().toISOString()
+      });
       Alert.alert('Error', 'Failed to send command');
     }
   };

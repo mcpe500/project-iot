@@ -14,9 +14,7 @@ import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
-
-// Backend configuration - Update this with your actual backend IP and port
-const BACKEND_URL = 'http://192.168.1.100:3000'; // Change this to your backend IP
+import { CONFIG } from '../config';
 
 interface Recording {
   id: string;
@@ -39,7 +37,7 @@ export default function RecordingsScreen() {
   const loadRecordings = async () => {
     try {
       setError(null);
-      const response = await axios.get(`${BACKEND_URL}/api/v1/stream/recordings`);
+      const response = await axios.get(`${CONFIG.BACKEND_URL}/api/v1/stream/recordings`);
       
       if (response.data.success) {
         // Sort recordings by creation date (newest first)

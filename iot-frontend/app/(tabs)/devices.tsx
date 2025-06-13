@@ -12,7 +12,7 @@ import {
   Switch,
   ScrollView
 } from 'react-native';
-import axios from 'axios';
+import api from '@/services/api';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
@@ -69,10 +69,9 @@ export default function DevicesScreen() {
 
     return () => clearInterval(interval);
   }, []);
-
   const loadDevices = async () => {
     try {
-      const response = await axios.get(getHttpURL('/api/v1/devices/devices'));
+      const response = await api.get('/api/v1/devices/devices');
       
       if (response.data.success) {
         setDevices(response.data.data.devices);
@@ -90,10 +89,9 @@ export default function DevicesScreen() {
       setRefreshing(false);
     }
   };
-
   const loadSystemStatus = async () => {
     try {
-      const response = await axios.get(getHttpURL('/api/v1/devices/system/status'));
+      const response = await api.get('/api/v1/devices/system/status');
       
       if (response.data.success) {
         setSystemStatus(response.data.data.systemStatus);
@@ -104,19 +102,14 @@ export default function DevicesScreen() {
   };
 
   const sendCommand = async (deviceId: string, command: string, params?: any) => {
-    setSendingCommand(deviceId);
-    try {
+    setSendingCommand(deviceId);    try {
       const payload: DeviceCommand = {
         deviceId,
         command,
         params
       };
 
-      const response = await axios.post(getHttpURL('/api/v1/control/command'), payload, {
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      const response = await api.post('/api/v1/control/command', payload);
 
       if (response.data.success) {
         Alert.alert('Success', `Command "${command}" sent to ${deviceId}`);
@@ -148,11 +141,10 @@ export default function DevicesScreen() {
       default: return '#757575';
     }
   };
-
   const getDeviceIcon = (deviceType: string) => {
     switch (deviceType) {
       case 'camera': return 'camera.fill';
-      case 'valve': return 'valve.fill';
+      case 'valve': return 'drop.fill';
       case 'master': return 'cpu.fill';
       default: return 'questionmark.circle.fill';
     }
