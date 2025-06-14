@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Platform, TextInput } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { CameraView, useCameraPermissions, CameraType } from 'expo-camera'; // Import CameraType
-import * as FileSystem from 'expo-file-system';
-// import { API_URL } from '@/app/config'; // Assuming you have your API_URL configured
+import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import { IconSymbol } from '@/components/ui/IconSymbol';
-import { CONFIG } from '../config';
+import { ENV_CONFIG, getWebSocketUrl } from '../../services/config';
 
 const MAX_FPS = 10;
 const FRAME_INTERVAL_MS = 1000 / MAX_FPS;
@@ -22,14 +20,15 @@ interface FrameInfo {
 }
 
 export default function LiveStreamScreen() {
-  const [facing, setFacing] = useState<CameraType>('back'); // Use CameraType
+  const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
   const [lastFrame, setLastFrame] = useState<FrameInfo | null>(null);
   const [fps, setFps] = useState(0);
   const [lastFrameTime, setLastFrameTime] = useState<number | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
+  const [isSendingStream, setIsSendingStream] = useState(false);
   const [isRecordLoading, setIsRecordLoading] = useState(false);
   const [isAddingFace, setIsAddingFace] = useState(false);
   const [faceName, setFaceName] = useState('');
@@ -42,18 +41,16 @@ export default function LiveStreamScreen() {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connectWebSocket = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('WebSocket already connected.');
-      return;
-    }
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+
     console.log('Attempting to connect WebSocket...');
-    // const wsUrl = CONFIG.WS_URL.replace(/^http/, 'ws');
-    const wsUrl = CONFIG.WS_URL;
-    const socket = new WebSocket(`${wsUrl}/`);
+    const wsUrl = getWebSocketUrl('/');
+    console.log(`[Debug] WebSocket URL being used: "${wsUrl}"`);
+    const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
       console.log('WebSocket connected');
-      setIsStreaming(true);
+      setIsConnected(true);
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
@@ -64,11 +61,22 @@ export default function LiveStreamScreen() {
       try {
         const data = JSON.parse(event.data as string);
         if (data.type === 'new_frame') {
-          setLastFrame({
-            url: `${CONFIG.BACKEND_URL}${data.url}`,
+          const newFrameUrl = `${ENV_CONFIG.BACKEND_URL}${data.url}?t=${Date.now()}`;
+          const newFrame = {
+            url: newFrameUrl,
             timestamp: data.timestamp,
             recognition: data.recognition,
-          });
+          };
+
+          Image.prefetch(newFrameUrl)
+            .then(() => {
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                setCurrentImageUrl(newFrameUrl);
+                setLastFrame(newFrame);
+              }
+            })
+            .catch(error => console.error('Image prefetch failed:', error));
+
           frameCountRef.current++;
           setLastFrameTime(Date.now());
         } else if (data.type === 'connection' && data.status === 'connected') {
@@ -85,11 +93,11 @@ export default function LiveStreamScreen() {
 
     socket.onclose = () => {
       console.log('WebSocket disconnected');
-      setIsStreaming(false);
+      setIsConnected(false);
       if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
       streamIntervalRef.current = null;
+      setIsSendingStream(false);
       if (!reconnectTimeoutRef.current) {
-        console.log(`Attempting to reconnect in ${RECONNECT_DELAY_MS / 1000} seconds...`);
         reconnectTimeoutRef.current = setTimeout(connectWebSocket, RECONNECT_DELAY_MS);
       }
     };
@@ -98,23 +106,19 @@ export default function LiveStreamScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      console.log('LiveStreamScreen focused, connecting WebSocket.');
       connectWebSocket();
       return () => {
         console.log('LiveStreamScreen unfocused, disconnecting WebSocket.');
-        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-        streamIntervalRef.current = null;
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = null;
-        }
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
         if (wsRef.current) {
           wsRef.current.close();
           wsRef.current = null;
         }
-        setIsStreaming(false);
-        setLastFrame(null);
-        setFps(0);
+        setIsConnected(false);
+        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
+        streamIntervalRef.current = null;
+        setIsSendingStream(false);
       };
     }, [connectWebSocket])
   );
@@ -133,10 +137,10 @@ export default function LiveStreamScreen() {
   }, []);
 
   const captureAndSendFrame = async () => {
-    if (cameraRef.current && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (cameraRef.current && isConnected) {
       try {
         const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, base64: false });
-        if (photo && photo.uri) {
+        if (photo?.uri) {
           const formData = new FormData();
           formData.append('image', {
             uri: photo.uri,
@@ -145,19 +149,10 @@ export default function LiveStreamScreen() {
           } as any);
           formData.append('deviceId', 'mobile-app-camera');
 
-          fetch(`${CONFIG.BACKEND_URL}/api/v1/stream/stream`, {
+          fetch(`${ENV_CONFIG.BACKEND_URL}/api/v1/stream/stream`, {
             method: 'POST',
             body: formData,
-            headers: {
-              'Content-Type': 'multipart/form-data',
-            },
-          })
-          .then(response => {
-            if (!response.ok) {
-              response.json().then(err => console.error('Error sending frame:', err)).catch(() => console.error('Error sending frame and parsing error response'));
-            }
-          })
-          .catch(error => console.error('Error sending frame:', error));
+          }).catch(error => console.error('Error sending frame:', error));
         }
       } catch (error) {
         console.error('Error taking picture:', error);
@@ -166,16 +161,18 @@ export default function LiveStreamScreen() {
   };
 
   const toggleStreaming = () => {
-    if (isStreaming && streamIntervalRef.current) {
-      clearInterval(streamIntervalRef.current);
-      streamIntervalRef.current = null;
-      console.log("Stopped sending frames via camera.");
-    } else if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      streamIntervalRef.current = setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
-      console.log("Started sending frames via camera.");
-    } else {
-      Alert.alert("Not Connected", "WebSocket is not connected. Cannot start streaming frames from camera.");
+    if (!isConnected) {
+      Alert.alert("Not Connected", "Cannot start/stop camera stream.");
+      return;
     }
+    const currentlySending = !!streamIntervalRef.current;
+    if (currentlySending) {
+      clearInterval(streamIntervalRef.current!);
+      streamIntervalRef.current = null;
+    } else {
+      streamIntervalRef.current = setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
+    }
+    setIsSendingStream(!currentlySending);
   };
 
   const handleAddPermittedFace = async () => {
@@ -192,19 +189,17 @@ export default function LiveStreamScreen() {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.8, base64: false });
       if (photo && photo.uri) {
         const formData = new FormData();
+        const fileUri = Platform.OS === "android" ? photo.uri : photo.uri.replace("file://", "");
         formData.append('image', {
-          uri: photo.uri,
+          uri: fileUri,
           name: `${faceName.trim().replace(/\s+/g, '_')}.jpg`,
           type: 'image/jpeg',
         } as any);
         formData.append('name', faceName.trim());
 
-        const response = await fetch(`${CONFIG.BACKEND_URL}/api/v1/recognition/add-permitted-face`, {
+        const response = await fetch(`${ENV_CONFIG.BACKEND_URL}/api/v1/recognition/add-permitted-face`, {
           method: 'POST',
           body: formData,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
         });
 
         const result = await response.json();
@@ -219,14 +214,15 @@ export default function LiveStreamScreen() {
     } catch (error) {
       console.error('Error adding permitted face:', error);
       Alert.alert("Error", "Failed to capture or send image for face recognition.");
+    } finally {
+      setIsAddingFace(false);
     }
-    setIsAddingFace(false);
   };
 
   const saveRecording = async () => {
     setIsRecordLoading(true);
     try {
-      const response = await fetch(`${CONFIG.BACKEND_URL}/api/v1/stream/record`, { method: 'POST' });
+      const response = await fetch(`${ENV_CONFIG.BACKEND_URL}/api/v1/stream/record`, { method: 'POST' });
       const result = await response.json();
       if (response.ok && result.success) {
         Alert.alert("Recording Saved", `Video ID: ${result.data.recordingId}\nFrames: ${result.data.frameCount}`);
@@ -236,8 +232,9 @@ export default function LiveStreamScreen() {
     } catch (error) {
       console.error('Error saving recording:', error);
       Alert.alert("Error", "Failed to save recording. Check server connection.");
+    } finally {
+      setIsRecordLoading(false);
     }
-    setIsRecordLoading(false);
   };
 
   if (!permission) {
@@ -259,64 +256,49 @@ export default function LiveStreamScreen() {
 
   const getRecognitionStyle = (status?: string) => {
     switch (status) {
-      case 'permitted_face':
-        return styles.recognitionPermitted;
-      case 'unknown_face':
-        return styles.recognitionUnknown;
-      case 'no_face_detected':
-        return styles.recognitionNone;
-      case 'recognition_error':
-      case 'models_not_loaded':
-        return styles.recognitionError;
-      default:
-        return styles.recognitionPending;
+      case 'permitted_face': return styles.recognitionPermitted;
+      case 'unknown_face': return styles.recognitionUnknown;
+      case 'no_face_detected': return styles.recognitionNone;
+      default: return styles.recognitionError;
     }
   };
 
   const getRecognitionText = (recognition?: FrameInfo['recognition']) => {
     if (!recognition) return "Recognition: Pending...";
     switch (recognition.status) {
-      case 'permitted_face':
-        return `Permitted: ${recognition.recognizedAs || 'Yes'}`;
-      case 'unknown_face':
-        return "Unknown Face Detected";
-      case 'no_face_detected':
-        return "No Face Detected";
-      case 'recognition_error':
-        return "Recognition Error";
-      case 'models_not_loaded':
-        return "Recognition Models Offline";
-      default:
-        return `Status: ${recognition.status}`;
+      case 'permitted_face': return `Permitted: ${recognition.recognizedAs || 'Yes'}`;
+      case 'unknown_face': return "Unknown Face Detected";
+      case 'no_face_detected': return "No Face Detected";
+      default: return "Recognition Error";
     }
   };
+
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Live Stream</Text>
-        <View style={[styles.statusIndicator, isStreaming ? styles.statusOnline : styles.statusOffline]} />
+        <View style={[styles.statusIndicator, isConnected ? styles.statusOnline : styles.statusOffline]} />
       </View>
 
       {showAddFaceModal ? (
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Add Permitted Face</Text>
-            <Text style={styles.modalInstructions}>Position the face clearly in the camera view below and enter a name.</Text>
             <View style={styles.cameraContainerSmall}>
               <CameraView style={styles.cameraSmall} facing={facing} ref={cameraRef} mode="picture" />
             </View>
-            <TextInput 
+            <TextInput
               style={styles.input}
               placeholder="Enter name for the face"
               value={faceName}
               onChangeText={setFaceName}
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity style={[styles.button, styles.modalButton]} onPress={() => setShowAddFaceModal(false)} disabled={isAddingFace}>
+              <TouchableOpacity style={styles.button} onPress={() => setShowAddFaceModal(false)} disabled={isAddingFace}>
                 <Text style={styles.buttonText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.modalButton]} onPress={handleAddPermittedFace} disabled={isAddingFace}>
+              <TouchableOpacity style={styles.button} onPress={handleAddPermittedFace} disabled={isAddingFace}>
                 {isAddingFace ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Capture & Save</Text>}
               </TouchableOpacity>
             </View>
@@ -324,12 +306,20 @@ export default function LiveStreamScreen() {
         </View>
       ) : (
         <View style={styles.streamContainer}>
-          {lastFrame && lastFrame.url ? (
-            <Image source={{ uri: lastFrame.url }} style={styles.streamImage} resizeMode="contain" />
+          {isSendingStream ? (
+            <CameraView style={styles.streamImage} facing={facing} ref={cameraRef} mode="picture" />
+          ) : currentImageUrl ? (
+            <Image
+              source={{ uri: currentImageUrl }}
+              style={styles.streamImage}
+              resizeMode="contain"
+            />
           ) : (
             <View style={styles.noStreamContainer}>
-              <Ionicons name="videocam-off-outline" size={64} color="#aaa" />
-              <Text style={styles.noStreamText}>{isStreaming ? "Waiting for stream..." : "Stream offline. Connect to WebSocket."}</Text>
+              <ActivityIndicator size="large" color="#aaa" />
+              <Text style={styles.noStreamText}>
+                {isConnected ? "Waiting for stream..." : "Connecting..."}
+              </Text>
             </View>
           )}
         </View>
@@ -339,44 +329,45 @@ export default function LiveStreamScreen() {
         <ScrollView style={styles.controlsContainer}>
           <View style={styles.statsContainer}>
             <Text style={styles.statsText}>FPS: {fps}</Text>
+            <Text style={styles.statsText}>Status: {isConnected ? 'Connected' : 'Disconnected'}</Text>
             <Text style={styles.statsText}>Last Frame: {lastFrameTime ? new Date(lastFrameTime).toLocaleTimeString() : 'N/A'}</Text>
           </View>
-          {lastFrame && lastFrame.recognition && (
+          {lastFrame?.recognition && !isSendingStream && (
             <View style={[styles.recognitionStatus, getRecognitionStyle(lastFrame.recognition.status)]}>
               <Text style={styles.recognitionText}>{getRecognitionText(lastFrame.recognition)}</Text>
             </View>
           )}
 
           <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={toggleCameraFacing} style={styles.controlButton} disabled={showAddFaceModal}>
-              <Ionicons name="camera-reverse-outline" size={28} color="#007AFF" />
-              <Text style={styles.controlButtonText}>Flip</Text>
+            <TouchableOpacity onPress={toggleCameraFacing} style={styles.controlButton} disabled={!isSendingStream}>
+              <Ionicons name="camera-reverse-outline" size={28} color={isSendingStream ? "#007AFF" : "#aaa"} />
+              <Text style={[styles.controlButtonText, !isSendingStream && { color: "#aaa" }]}>Flip</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={toggleStreaming} style={styles.controlButton} disabled={showAddFaceModal || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN}>
-              <Ionicons name={streamIntervalRef.current ? "stop-circle-outline" : "play-circle-outline"} size={28} color={streamIntervalRef.current ? "#FF3B30" : "#34C759"} />
-              <Text style={styles.controlButtonText}>{streamIntervalRef.current ? "Stop Cam" : "Start Cam"}</Text>
+            <TouchableOpacity onPress={toggleStreaming} style={styles.controlButton} disabled={!isConnected}>
+              <Ionicons name={isSendingStream ? "stop-circle-outline" : "play-circle-outline"} size={28} color={!isConnected ? "#aaa" : isSendingStream ? "#FF3B30" : "#34C759"} />
+              <Text style={[styles.controlButtonText, { color: !isConnected ? "#aaa" : isSendingStream ? "#FF3B30" : "#34C759" }]}>
+                {isSendingStream ? "Stop Cam" : "Start Cam"}
+              </Text>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity 
-            onPress={saveRecording} 
-            style={[styles.button, styles.recordButton, (isRecordLoading || !isStreaming) && styles.buttonDisabled]} 
-            disabled={isRecordLoading || !isStreaming || showAddFaceModal}
+          <TouchableOpacity
+            onPress={saveRecording}
+            style={[styles.button, styles.recordButton, (!isConnected || isSendingStream) && styles.buttonDisabled]}
+            disabled={isRecordLoading || !isConnected || isSendingStream}
           >
-            {isRecordLoading ? <ActivityIndicator color="#fff" /> : <MaterialCommunityIcons name="record-rec" size={24} color="white" />}
+            <MaterialCommunityIcons name="record-rec" size={24} color="white" />
             <Text style={styles.buttonText}>Record Last 30s</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity 
-            onPress={() => setShowAddFaceModal(true)} 
-            style={[styles.button, (isAddingFace || !permission?.granted) && styles.buttonDisabled]} 
-            disabled={isAddingFace || !permission?.granted || (streamIntervalRef.current != null)}
+          <TouchableOpacity
+            onPress={() => setShowAddFaceModal(true)}
+            style={[styles.button, isSendingStream && styles.buttonDisabled]}
+            disabled={isSendingStream}
           >
             <MaterialCommunityIcons name="face-recognition" size={24} color="white" />
             <Text style={styles.buttonText}>Add Permitted Face</Text>
           </TouchableOpacity>
-          {streamIntervalRef.current != null && <Text style={styles.infoText}>Stop camera stream to add a face.</Text>}
-
         </ScrollView>
       )}
     </View>
@@ -429,11 +420,13 @@ const styles = StyleSheet.create({
   noStreamContainer: {
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   noStreamText: {
     color: '#aaa',
     marginTop: 10,
     fontSize: 16,
+    textAlign: 'center',
   },
   controlsContainer: {
     paddingHorizontal: 15,
