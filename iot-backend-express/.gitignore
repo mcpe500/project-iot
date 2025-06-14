@@ -37,3 +37,7 @@ report.*.json
 data/
 /data/
 /data
+
+recordings/
+/recordings/
+/recordings

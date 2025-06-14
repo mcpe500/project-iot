@@ -7,15 +7,23 @@ const multer = require('multer');
 const WebSocket = require('ws');
 const { Client } = require('ssh2');
 const fs = require('fs');
+const fsp = require('fs').promises; // Added for async file operations
 const path = require('path');
 const os = require('os');
 const dotenv = require('dotenv');
 const { createSshTunnel } = require('../job/tunnel');
+const ffmpeg = require('fluent-ffmpeg'); // Added for video processing
 
 // Ensure data directory exists
 const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
+}
+
+// Ensure recordings directory exists
+const recordingsDir = path.join(__dirname, '../recordings');
+if (!fs.existsSync(recordingsDir)) {
+  fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
 // Load environment variables
@@ -208,6 +216,104 @@ app.post('/api/v1/stream/stream', multer().single('image'), (req, res) => {
   res.json({ message: 'Frame received' });
 });
 
+// Endpoint to save the last 30 seconds of frames as a video recording
+app.post('/api/v1/stream/record', async (req, res) => {
+  let tempDir = null;
+  try {
+    const filesInDataDir = await fsp.readdir(dataDir);
+    const now = Date.now();
+    const maxAgeMs = 30 * 1000; // 30 seconds
+    let frameCount = 0;
+
+    const imageFilesToProcess = [];
+
+    for (const file of filesInDataDir) {
+      const filePath = path.join(dataDir, file);
+      try {
+        const stat = await fsp.stat(filePath);
+        if (!stat.isFile() || !file.toLowerCase().endsWith('.jpg')) continue;
+
+        const parts = file.split('_');
+        if (parts.length < 2) continue;
+
+        const timestampStrWithExt = parts[parts.length - 1];
+        const timestampStr = timestampStrWithExt.split('.')[0];
+        const fileTimestamp = parseInt(timestampStr, 10);
+
+        if (!isNaN(fileTimestamp) && (now - fileTimestamp <= maxAgeMs) && (now - fileTimestamp >= 0)) {
+          imageFilesToProcess.push({ filePath, timestamp: fileTimestamp, originalName: file });
+        }
+      } catch (statError) {
+        console.error(`Error stating file ${file}:`, statError);
+      }
+    }
+
+    if (imageFilesToProcess.length === 0) {
+      return res.json({ success: false, message: 'No frames found in the last 30 seconds to record.' });
+    }
+
+    // Sort files by timestamp to ensure correct order in video
+    imageFilesToProcess.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Create a temporary directory for ffmpeg processing
+    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'recording-frames-'));
+
+    // Copy sorted files to tempDir with sequential names
+    for (let i = 0; i < imageFilesToProcess.length; i++) {
+      const item = imageFilesToProcess[i];
+      // Pad with 5 zeros, e.g., img-00001.jpg, handles up to 99999 frames.
+      const tempFileName = `img-${String(i).padStart(5, '0')}.jpg`;
+      await fsp.copyFile(item.filePath, path.join(tempDir, tempFileName));
+    }
+    frameCount = imageFilesToProcess.length;
+
+    const recordingId = `rec_${Date.now()}.mp4`;
+    const outputVideoPath = path.join(recordingsDir, recordingId);
+    const inputPattern = path.join(tempDir, 'img-%05d.jpg');
+
+    // Determine FPS, e.g., 10 FPS or based on actual frames over time
+    // For simplicity, let's use a fixed FPS or calculate if possible.
+    // If we have N frames over ~30s, FPS = N/30. Let's use 10 FPS as a default.
+    const fps = Math.max(1, Math.min(30, Math.round(frameCount / 30))) || 10;
+
+
+    await new Promise((resolve, reject) => {
+      ffmpeg(inputPattern)
+        .inputFPS(fps)
+        .outputOptions([
+          '-c:v libx264',       // Video codec
+          '-pix_fmt yuv420p',   // Pixel format for compatibility
+          '-movflags +faststart'// Optimize for web streaming
+        ])
+        .output(outputVideoPath)
+        .on('end', () => {
+          console.log(`Recording ${recordingId} saved with ${frameCount} frames at ${fps} FPS.`);
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('Error during ffmpeg processing:', err.message);
+          reject(new Error(`FFmpeg error: ${err.message}`));
+        })
+        .run();
+    });
+
+    res.json({ success: true, data: { recordingId, frameCount, videoUrl: `/recordings/${recordingId}` } });
+
+  } catch (error) {
+    console.error('Error saving video recording:', error);
+    res.status(500).json({ success: false, error: `Failed to save video recording: ${error.message}` });
+  } finally {
+    if (tempDir) {
+      try {
+        await fsp.rm(tempDir, { recursive: true, force: true });
+        console.log('Temporary directory cleaned up:', tempDir);
+      } catch (cleanupError) {
+        console.error('Error cleaning up temporary directory:', cleanupError);
+      }
+    }
+  }
+});
+
 // Function to clean up old recordings
 function cleanupOldRecordings(directory, maxAgeMs) {
   fs.readdir(directory, (err, files) => {
@@ -238,24 +344,44 @@ function cleanupOldRecordings(directory, maxAgeMs) {
   });
 }
 
-// Get all recordings
-app.get('/api/v1/stream/recordings', (req, res) => {
-  fs.readdir(dataDir, (err, files) => {
-    if (err) {
-      console.error("Error reading data directory:", err);
-      return res.status(500).json({ error: 'Failed to retrieve recordings' });
-    }
-    // Optional: Filter for specific file types if needed, e.g., .jpg, .mp4
-    const recordings = files.map(file => ({
-      filename: file,
-      url: `/data/${file}` // Or a more direct way to serve/access files if needed
-    }));
-    res.json(recordings);
-  });
+// Get all recordings (now lists video files)
+app.get('/api/v1/stream/recordings', async (req, res) => {
+  try {
+    const files = await fsp.readdir(recordingsDir);
+    // Filter for .mp4 files and map to desired format
+    const videoRecordings = files
+      .filter(file => file.toLowerCase().endsWith('.mp4'))
+      .map(file => {
+        // Attempt to extract timestamp from filename like rec_1678886400000.mp4
+        let createdAt = null;
+        const nameParts = file.split('_');
+        if (nameParts.length > 1) {
+            const tsPart = nameParts[1].split('.')[0];
+            const timestamp = parseInt(tsPart, 10);
+            if (!isNaN(timestamp)) {
+                createdAt = new Date(timestamp).toISOString();
+            }
+        }
+        return {
+          filename: file,
+          url: `/recordings/${file}`, // URL to access the video
+          createdAt: createdAt || new Date(0).toISOString(), // Fallback if timestamp parsing fails
+          // You might want to use fsp.stat to get actual file creation time or size later
+        };
+      })
+      .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // Sort newest first
+
+    res.json(videoRecordings);
+  } catch (err) {
+    console.error("Error reading recordings directory:", err);
+    return res.status(500).json({ error: 'Failed to retrieve recordings' });
+  }
 });
 
 // Serve static files from the data directory
 app.use('/data', express.static(dataDir));
+// Serve static files from the recordings directory
+app.use('/recordings', express.static(recordingsDir));
 
 // Handle WebSocket upgrades
 const server = app.listen(port, () => {
