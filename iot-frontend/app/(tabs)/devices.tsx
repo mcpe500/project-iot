@@ -350,7 +350,7 @@ export default function DevicesScreen() {
         ListEmptyComponent={
           !loading ? (
             <View style={styles.emptyContainer}>
-              <IconSymbol name="antenna" size={64} color="#666" />
+              <IconSymbol name="wifi-off" size={64} color="#666" />
               <Text style={styles.emptyTitle}>No Devices Found</Text>
               <Text style={styles.emptySubtext}>
                 Pull down to refresh or check backend connection.

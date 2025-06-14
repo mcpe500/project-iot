@@ -41,29 +41,81 @@ function setupRoutes(app, dataStore, wss) {
   // Device registration
   app.post('/api/v1/devices/register', (req, res) => {
     const device = req.body;
-    if (!device.id || !device.name || !device.type) {
+    if (!device.deviceId || !device.deviceName || !device.deviceType) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
     const registeredDevice = dataStore.registerDevice({
-      ...device,
+      id: device.deviceId,
+      name: device.deviceName,
+      type: device.deviceType,
+      ipAddress: device.ipAddress,
       status: 'online',
-      lastSeen: Date.now()
+      lastSeen: Date.now(),
+      uptime: 0,
+      freeHeap: 0,
+      capabilities: device.capabilities || []
     });
-    
     res.json(registeredDevice);
   });
 
+  // Heartbeat endpoint
+  app.post('/api/v1/devices/heartbeat', (req, res) => {
+    const { deviceId, uptime, freeHeap, wifiRssi, status } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID required' });
+    }
+    const device = dataStore.getDevice(deviceId);
+    if (device) {
+      device.lastSeen = Date.now();
+      device.uptime = uptime || device.uptime;
+      device.freeHeap = freeHeap || device.freeHeap;
+      device.wifiRssi = wifiRssi;
+      device.status = status || 'online';
+      dataStore.registerDevice(device);
+    }
+    res.json({ message: 'Heartbeat received', status: 'success' });
+  });
+
   // Get all devices
-  app.get('/api/v1/devices/devices', (req, res) => {
-    const devices = dataStore.getAllDevices();
-    res.json(devices);
+  app.get('/api/v1/devices', (req, res) => {
+    const allDevices = dataStore.getAllDevices();
+    const formattedDevices = allDevices.map(device => ({
+      deviceId: device.id,
+      deviceName: device.name,
+      deviceType: device.type,
+      status: device.status,
+      ipAddress: device.ipAddress,
+      lastHeartbeat: device.lastSeen,
+      uptime: device.uptime,
+      freeHeap: device.freeHeap,
+      wifiRssi: device.wifiRssi,
+      errorCount: device.errors || 0,
+      capabilities: device.capabilities || []
+    }));
+    res.json({
+      success: true,
+      devices: formattedDevices
+    });
   });
 
   // Get system status
-  app.get('/api/v1/devices/system/status', (req, res) => {
-    const status = dataStore.getSystemStatus();
-    res.json(status);
+  app.get('/api/v1/system/status', (req, res) => {
+    const allDevices = dataStore.getAllDevices();
+    const onlineDevices = allDevices.filter(d => d.status === 'online' || d.status === 'warning').length;
+    const systemStatus = {
+      devicesOnline: onlineDevices,
+      devicesTotal: allDevices.length,
+      systemUptime: Math.floor(process.uptime()),
+      totalCommandsSent: 0,
+      totalCommandsFailed: 0,
+      backendConnected: true,
+      lastBackendSync: Date.now(),
+      systemLoad: 0.1
+    };
+    res.json({
+      success: true,
+      status: systemStatus
+    });
   });
 
   // Sensor data ingestion
@@ -348,30 +400,42 @@ function setupRoutes(app, dataStore, wss) {
 
   app.post('/api/v1/devices/:deviceId/command', (req, res) => {
     const { deviceId } = req.params;
-    const { command, payload } = req.body;
+    const { command, params } = req.body;
 
-    const device = devices.find(d => d.id === deviceId);
-
+    const device = dataStore.getDevice(deviceId);
     if (!device) {
-      return res.status(404).json({ message: "Device not found" });
+      return res.status(404).json({ success: false, message: "Device not found" });
     }
 
-    console.log(`Received command '${command}' for device ${deviceId} with payload:`, payload);
+    console.log(`Received command '${command}' for device ${deviceId} with params:`, params);
 
-    if (command === 'reboot') {
-      device.status = 'rebooting';
-      setTimeout(() => {
-        const d = devices.find(dev => dev.id === deviceId);
-        if (d) d.status = 'online';
-        console.log(`Device ${deviceId} rebooted and is now online.`);
-      }, 5000);
-    } else if (command === 'setActive') {
-      console.log(`Device ${deviceId} active state set to ${payload.active}`);
+    switch (command) {
+      case 'restart':
+        device.status = 'maintenance';
+        dataStore.registerDevice(device);
+        setTimeout(() => {
+          const d = dataStore.getDevice(deviceId);
+          if (d) {
+            d.status = 'online';
+            dataStore.registerDevice(d);
+          }
+        }, 5000);
+        break;
+      case 'ping':
+        break;
+      case 'snapshot':
+        if (device.type === 'camera') {
+          console.log(`Taking snapshot for camera ${deviceId}`);
+        }
+        break;
+      default:
+        console.log(`Unknown command: ${command}`);
     }
 
-    res.status(200).json({ 
-      message: `Command '${command}' sent to device ${deviceId} successfully.`, 
-      deviceStatus: device.status 
+    res.json({
+      success: true,
+      message: `Command '${command}' sent to device ${deviceId} successfully.`,
+      deviceStatus: device.status
     });
   });
 
