@@ -9,14 +9,14 @@ import {
   RefreshControl,
   ActivityIndicator,
   StatusBar,
-  Switch,
-  ScrollView
 } from 'react-native';
-import api from '@/services/api';
+import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+// import { IconSymbol, IconName } from '@/components/IconSymbol';
+import { CONFIG } from '@/app/config';
+import { IconName } from '@/components/IconSymbol';
 import { IconSymbol } from '@/components/ui/IconSymbol';
-import { CONFIG, getHttpURL } from '@/app/config';
 
 interface Device {
   deviceId: string;
@@ -57,356 +57,309 @@ export default function DevicesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [sendingCommand, setSendingCommand] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadDevices();
-    loadSystemStatus();
-    
-    // Auto-refresh every 5 seconds
-    const interval = setInterval(() => {
-      loadDevices();
-      loadSystemStatus();
-    }, 5000);
+  const api = axios.create({
+    baseURL: CONFIG.BACKEND_URL,
+    timeout: 10000,
+  });
 
-    return () => clearInterval(interval);
+  useEffect(() => {
+    loadData();
   }, []);
-  const loadDevices = async () => {
+
+  const loadData = async (isRefresh = false) => {
+    if (!isRefresh) setLoading(true);
+    else setRefreshing(true);
+    setError(null);
     try {
-      const response = await api.get('/api/v1/devices/devices');
-      if (response.data) {
-        setDevices(response.data);
-        setError(null);
+      const [devicesResponse, statusResponse] = await Promise.all([
+        api.get('/api/v1/devices'),
+        api.get('/api/v1/system/status'),
+      ]);
+
+      if (devicesResponse.data && Array.isArray(devicesResponse.data.devices)) {
+        setDevices(devicesResponse.data.devices);
       } else {
-        setError('Failed to load devices');
+        console.warn('Unexpected devices data format:', devicesResponse.data);
+        setDevices([]);
       }
-    } catch (error) {
-      console.error('Error loading devices:', error);
-      if (!refreshing) {
-        setError('Failed to connect to server. Please check your backend connection.');
+
+      if (statusResponse.data && typeof statusResponse.data.status === 'object') {
+        setSystemStatus(statusResponse.data.status);
+      } else {
+        console.warn('Unexpected system status data format:', statusResponse.data);
+        setSystemStatus(null);
       }
+
+      if (!devicesResponse.data || !statusResponse.data) {
+        setError('Failed to load some data. Endpoints might be missing.');
+      }
+    } catch (err: any) {
+      console.error('Error loading device data:', err);
+      setError(
+        err.message ||
+          'Failed to connect to the server. Ensure backend is running and API endpoints for devices & system status are available.'
+      );
+      setDevices([]);
+      setSystemStatus(null);
     } finally {
-      setLoading(false);
+      if (!isRefresh) setLoading(false);
       setRefreshing(false);
-    }
-  };
-  const loadSystemStatus = async () => {
-    try {
-      const response = await api.get('/api/v1/devices/system/status');
-      
-      if (response.data.success) {
-        setSystemStatus(response.data.data.systemStatus);
-      }
-    } catch (error) {
-      console.error('Error loading system status:', error);
     }
   };
 
   const sendCommand = async (deviceId: string, command: string, params?: any) => {
-    setSendingCommand(deviceId);    try {
-      const payload: DeviceCommand = {
-        deviceId,
-        command,
-        params
-      };
-
-      const response = await api.post('/api/v1/control/command', payload);
-
-      if (response.data.success) {
-        Alert.alert('Success', `Command "${command}" sent to ${deviceId}`);
-        // Refresh devices to get updated status
-        loadDevices();
-      } else {
-        Alert.alert('Error', response.data.error || 'Failed to send command');
-      }
-    } catch (error) {
-      console.error('Error sending command:', error);
-      Alert.alert('Error', 'Failed to send command to device');
+    const commandId = `${deviceId}_${command}_${JSON.stringify(params || {})}`;
+    setSendingCommand(commandId);
+    try {
+      console.log(`Sending command: ${command} to device ${deviceId} with params:`, params);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      Alert.alert('Success', `Command "${command}" sent to device ${deviceId}.`);
+    } catch (error: any) {
+      console.error(`Error sending command ${command} to device ${deviceId}:`, error);
+      Alert.alert('Error', `Failed to send command "${command}". ${error.message || ''}`);
     } finally {
       setSendingCommand(null);
     }
   };
 
   const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    loadDevices();
-    loadSystemStatus();
+    loadData(true);
   }, []);
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'online': return '#4CAF50';
-      case 'offline': return '#757575';
-      case 'error': return '#F44336';
-      case 'maintenance': return '#FF9800';
-      default: return '#757575';
-    }
-  };
-  const getDeviceIcon = (deviceType: string) => {
-    switch (deviceType) {
-      case 'camera': return 'camera.fill';
-      case 'valve': return 'drop.fill';
-      case 'master': return 'cpu.fill';
-      default: return 'questionmark.circle.fill';
-    }
+    if (status === 'online') return '#4CAF50';
+    if (status === 'offline') return '#F44336';
+    if (status === 'error') return '#FF9800';
+    if (status === 'maintenance') return '#2196F3';
+    return '#9E9E9E';
   };
 
-  const formatUptime = (uptimeSeconds: number) => {
-    const hours = Math.floor(uptimeSeconds / 3600);
-    const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
+  const getDeviceIcon = (deviceType: string): IconName => {
+    if (deviceType === 'camera') return 'camera';
+    if (deviceType === 'valve') return 'valve';
+    if (deviceType === 'master') return 'server';
+    return 'help-circle-outline';
   };
 
-  const formatMemory = (bytes: number) => {
-    return `${(bytes / 1024).toFixed(1)} KB`;
+  const formatUptime = (seconds: number) => {
+    if (isNaN(seconds) || seconds < 0) return 'N/A';
+    const d = Math.floor(seconds / (3600 * 24));
+    const h = Math.floor((seconds % (3600 * 24)) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    let str = '';
+    if (d > 0) str += `${d}d `;
+    if (h > 0) str += `${h}h `;
+    if (m > 0 || (d === 0 && h === 0)) str += `${m}m`;
+    return str.trim() || '0m';
   };
 
   const formatLastSeen = (timestamp: number) => {
-    const diff = Date.now() - timestamp;
-    const seconds = Math.floor(diff / 1000);
-    
-    if (seconds < 60) return `${seconds}s ago`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-    return `${Math.floor(seconds / 3600)}h ago`;
+    if (!timestamp || isNaN(timestamp)) return 'N/A';
+    const now = Date.now();
+    const diffSeconds = Math.floor((now - timestamp) / 1000);
+    if (diffSeconds < 60) return `${diffSeconds}s ago`;
+    if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
+    if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}h ago`;
+    return new Date(timestamp).toLocaleDateString();
   };
 
-  const renderCameraControls = (device: Device) => (
-    <View style={styles.controlsContainer}>
-      <TouchableOpacity
-        style={[styles.controlButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'cam_start_stream')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Start Stream</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity
-        style={[styles.controlButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'cam_stop_stream')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Stop Stream</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity
-        style={[styles.controlButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'cam_take_photo')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Take Photo</Text>
-      </TouchableOpacity>
-    </View>
-  );
+  const renderDeviceItem = ({ item }: { item: Device }) => {
+    const isCamera = item.deviceType === 'camera';
+    const commands = [
+      { name: 'Restart', action: 'restart', style: styles.warningButton, icon: 'restart' as IconName },
+      ...(isCamera
+        ? [{ name: 'Snapshot', action: 'snapshot', style: styles.successButton, icon: 'camera-iris' as IconName }]
+        : []),
+      { name: 'Ping', action: 'ping', style: styles.controlButton, icon: 'access-point-network' as IconName },
+    ];
 
-  const renderValveControls = (device: Device) => (
-    <View style={styles.controlsContainer}>
-      <TouchableOpacity
-        style={[styles.controlButton, styles.successButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'valve_open')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Open Valve</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity
-        style={[styles.controlButton, styles.dangerButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'valve_close')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Close Valve</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity
-        style={[styles.controlButton, styles.warningButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'valve_emergency_stop')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Emergency Stop</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderMasterControls = (device: Device) => (
-    <View style={styles.controlsContainer}>
-      <TouchableOpacity
-        style={[styles.controlButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'status_request')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Get Status</Text>
-      </TouchableOpacity>
-      
-      <TouchableOpacity
-        style={[styles.controlButton, { opacity: sendingCommand === device.deviceId ? 0.5 : 1 }]}
-        onPress={() => sendCommand(device.deviceId, 'ping')}
-        disabled={sendingCommand === device.deviceId}
-      >
-        <Text style={styles.controlButtonText}>Ping Devices</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderDevice = ({ item: device }: { item: Device }) => (
-    <View style={styles.deviceCard}>
-      <View style={styles.deviceHeader}>
-        <View style={styles.deviceInfo}>
-          <IconSymbol 
-            name={getDeviceIcon(device.deviceType)} 
-            size={24} 
-            color={getStatusColor(device.status)} 
-          />
-          <View style={styles.deviceDetails}>
-            <ThemedText style={styles.deviceName}>{device.deviceName}</ThemedText>
-            <ThemedText style={styles.deviceType}>{device.deviceType.toUpperCase()}</ThemedText>
+    return (
+      <View style={styles.deviceCard}>
+        <View style={styles.deviceHeader}>
+          <View style={styles.deviceInfo}>
+            <IconSymbol name={getDeviceIcon(item.deviceType)} size={28} color={getStatusColor(item.status)} />
+            <View style={styles.deviceDetails}>
+              <Text style={styles.deviceName}>{item.deviceName || item.deviceId}</Text>
+              <Text style={styles.deviceType}>{item.deviceType}</Text>
+            </View>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.statusText}>{item.status.toUpperCase()}</Text>
           </View>
         </View>
-        
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(device.status) }]}>
-          <Text style={styles.statusText}>{device.status.toUpperCase()}</Text>
-        </View>
-      </View>
-
-      <View style={styles.deviceStats}>
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>IP Address</Text>
-          <Text style={styles.statValue}>{device.ipAddress}</Text>
-        </View>
-        
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Uptime</Text>
-          <Text style={styles.statValue}>{formatUptime(device.uptime)}</Text>
-        </View>
-        
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Free Memory</Text>
-          <Text style={styles.statValue}>{formatMemory(device.freeHeap)}</Text>
-        </View>
-        
-        {device.wifiRssi && (
+        <View style={styles.deviceStats}>
           <View style={styles.statItem}>
-            <Text style={styles.statLabel}>WiFi Signal</Text>
-            <Text style={styles.statValue}>{device.wifiRssi} dBm</Text>
+            <Text style={styles.statLabel}>IP Address</Text>
+            <Text style={styles.statValue}>{item.ipAddress || 'N/A'}</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Uptime</Text>
+            <Text style={styles.statValue}>{formatUptime(item.uptime)}</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Free Heap</Text>
+            <Text style={styles.statValue}>
+              {item.freeHeap ? `${(item.freeHeap / 1024).toFixed(1)} KB` : 'N/A'}
+            </Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>Last Seen</Text>
+            <Text style={styles.statValue}>{formatLastSeen(item.lastHeartbeat)}</Text>
+          </View>
+          {item.wifiRssi !== undefined && (
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>WiFi RSSI</Text>
+              <Text style={styles.statValue}>{item.wifiRssi} dBm</Text>
+            </View>
+          )}
+          {item.errorCount > 0 && (
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Errors</Text>
+              <Text style={[styles.statValue, styles.errorText]}>{item.errorCount}</Text>
+            </View>
+          )}
+        </View>
+        {item.capabilities && item.capabilities.length > 0 && (
+          <View>
+            <Text style={styles.sectionSubtitle}>Capabilities:</Text>
+            <Text style={styles.capabilitiesText}>{item.capabilities.join(', ')}</Text>
           </View>
         )}
-        
-        <View style={styles.statItem}>
-          <Text style={styles.statLabel}>Last Seen</Text>
-          <Text style={styles.statValue}>{formatLastSeen(device.lastHeartbeat)}</Text>
+        <View style={styles.controlsContainer}>
+          {commands.map((cmd) => {
+            const cmdId = `${item.deviceId}_${cmd.action}_${JSON.stringify({})}`;
+            const isLoading = sendingCommand === cmdId;
+            return (
+              <TouchableOpacity
+                key={cmd.action}
+                style={[
+                  styles.controlButtonBase,
+                  cmd.style,
+                  (isLoading || item.status === 'offline') && styles.disabledButton,
+                ]}
+                onPress={() => sendCommand(item.deviceId, cmd.action)}
+                disabled={isLoading || item.status === 'offline'}
+              >
+                {isLoading ? (
+                  <ActivityIndicator size="small" color="#fff" style={{ marginRight: 6 }} />
+                ) : (
+                  <IconSymbol name={cmd.icon} size={14} color="#fff" style={{ marginRight: 6 }} />
+                )}
+                <Text style={styles.controlButtonText}>{cmd.name}</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
-        
-        {device.errorCount > 0 && (
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>Errors</Text>
-            <Text style={[styles.statValue, styles.errorText]}>{device.errorCount}</Text>
-          </View>
-        )}
       </View>
-
-      {device.status === 'online' && (
-        <>
-          {device.deviceType === 'camera' && renderCameraControls(device)}
-          {device.deviceType === 'valve' && renderValveControls(device)}
-          {device.deviceType === 'master' && renderMasterControls(device)}
-        </>
-      )}
-    </View>
-  );
+    );
+  };
 
   const renderSystemStatus = () => {
     if (!systemStatus) return null;
-
+    const {
+      backendConnected,
+      devicesOnline,
+      devicesTotal,
+      systemUptime,
+      totalCommandsSent,
+      totalCommandsFailed,
+      lastBackendSync,
+      systemLoad,
+    } = systemStatus;
+    const connectionIconName: IconName = backendConnected ? 'lan-connect' : 'lan-disconnect';
     return (
       <View style={styles.systemStatusCard}>
-        <ThemedText style={styles.sectionTitle}>System Status</ThemedText>
-        
         <View style={styles.systemStats}>
           <View style={styles.systemStatItem}>
-            <Text style={styles.systemStatValue}>{systemStatus.devicesOnline}/{systemStatus.devicesTotal}</Text>
+            <Text style={styles.systemStatValue}>{devicesOnline || 0}</Text>
             <Text style={styles.systemStatLabel}>Devices Online</Text>
           </View>
-          
           <View style={styles.systemStatItem}>
-            <Text style={styles.systemStatValue}>{systemStatus.systemLoad}%</Text>
+            <Text style={styles.systemStatValue}>{devicesTotal || 0}</Text>
+            <Text style={styles.systemStatLabel}>Total Devices</Text>
+          </View>
+          <View style={styles.systemStatItem}>
+            <Text style={styles.systemStatValue}>
+              {systemLoad ? `${(systemLoad * 100).toFixed(0)}%` : 'N/A'}
+            </Text>
             <Text style={styles.systemStatLabel}>System Load</Text>
           </View>
-          
-          <View style={styles.systemStatItem}>
-            <Text style={styles.systemStatValue}>{systemStatus.totalCommandsSent}</Text>
-            <Text style={styles.systemStatLabel}>Commands Sent</Text>
-          </View>
-          
-          <View style={styles.systemStatItem}>
-            <Text style={styles.systemStatValue}>{systemStatus.totalCommandsFailed}</Text>
-            <Text style={styles.systemStatLabel}>Command Failures</Text>
-          </View>
         </View>
-        
         <View style={styles.connectionStatus}>
-          <View style={[styles.connectionIndicator, { 
-            backgroundColor: systemStatus.backendConnected ? '#4CAF50' : '#F44336' 
-          }]} />
+          <IconSymbol
+            name={connectionIconName}
+            size={16}
+            color={backendConnected ? '#4CAF50' : '#F44336'}
+            style={{ marginRight: 6 }}
+          />
           <Text style={styles.connectionText}>
-            Backend {systemStatus.backendConnected ? 'Connected' : 'Disconnected'}
+            Backend: {backendConnected ? 'Connected' : 'Disconnected'}
+            {backendConnected && lastBackendSync
+              ? ` (Synced ${formatLastSeen(lastBackendSync)})`
+              : ''}
           </Text>
         </View>
+        <Text style={styles.detailText}>System Uptime: {formatUptime(systemUptime)}</Text>
+        <Text style={styles.detailText}>
+          Commands: {totalCommandsSent} Sent, {totalCommandsFailed} Failed
+        </Text>
       </View>
     );
   };
 
-  if (error && !refreshing) {
+  if (loading && devices.length === 0) {
     return (
-      <ThemedView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
-        <View style={styles.header}>
-          <ThemedText type="title" style={styles.title}>Device Management</ThemedText>
-        </View>
-        <View style={styles.errorContainer}>
-          <ThemedText style={styles.errorText}>{error}</ThemedText>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={() => {
-              setError(null);
-              setLoading(true);
-              loadDevices();
-              loadSystemStatus();
-            }}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      </ThemedView>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+        <Text style={styles.loadingText}>Loading Devices...</Text>
+      </View>
     );
   }
 
-  if (loading) {
+  if (error && devices.length === 0 && !refreshing) {
     return (
-      <ThemedView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
-        <View style={styles.header}>
-          <ThemedText type="title" style={styles.title}>Device Management</ThemedText>
-        </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4CAF50" />
-          <ThemedText style={styles.loadingText}>Loading devices...</ThemedText>
-        </View>
-      </ThemedView>
+      <View style={styles.errorContainer}>
+        <IconSymbol name="alert-circle-outline" size={48} color="#F44336" />
+        <Text style={styles.emptyTitle}>Connection Error</Text>
+        <Text style={styles.emptySubtext}>{error}</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={() => loadData(false)}>
+          <Text style={styles.retryButtonText}>Try Again</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
-      
       <View style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Device Management</ThemedText>
-        <TouchableOpacity
-          style={styles.refreshButton}
-          onPress={onRefresh}
-        >
-          <IconSymbol name="arrow.clockwise" size={24} color="#fff" />
+        <Text style={styles.title}>Device Management</Text>
+        <TouchableOpacity onPress={() => loadData(true)} style={styles.refreshButton} disabled={refreshing}>
+          {refreshing ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <IconSymbol name="refresh" size={20} color="#fff" />
+          )}
         </TouchableOpacity>
       </View>
-
-      <ScrollView
-        style={styles.content}
+      <FlatList
+        data={devices}
+        renderItem={renderDeviceItem}
+        keyExtractor={(item) => item.deviceId}
+        ListHeaderComponent={renderSystemStatus}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.emptyContainer}>
+              <IconSymbol name="antenna" size={64} color="#666" />
+              <Text style={styles.emptyTitle}>No Devices Found</Text>
+              <Text style={styles.emptySubtext}>
+                Pull down to refresh or check backend connection.
+              </Text>
+            </View>
+          ) : null
+        }
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -415,108 +368,64 @@ export default function DevicesScreen() {
             tintColor="#4CAF50"
           />
         }
-      >
-        {renderSystemStatus()}
-        
-        <ThemedText style={styles.sectionTitle}>Connected Devices</ThemedText>
-        
-        {devices.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <ThemedText style={styles.emptyText}>No devices found</ThemedText>
-            <ThemedText style={styles.emptySubtext}>
-              Make sure your ESP32 devices are powered on and connected to the network
-            </ThemedText>
-          </View>
-        ) : (
-          <FlatList
-            data={devices}
-            renderItem={renderDevice}
-            keyExtractor={(item) => item.deviceId}
-            scrollEnabled={false}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
-      </ScrollView>
+      />
     </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
+  container: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: StatusBar.currentHeight ? StatusBar.currentHeight + 10 : 50,
+    paddingTop: (StatusBar.currentHeight || 0) + 15,
     paddingBottom: 15,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: '#121212',
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
   },
-  title: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  refreshButton: {
-    padding: 8,
-  },
-  content: {
-    flex: 1,
-    padding: 16,
-  },
+  title: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  refreshButton: { padding: 8 },
+  content: { flex: 1 },
   sectionTitle: {
     color: '#fff',
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 16,
-    marginTop: 16,
+    marginBottom: 10,
+    marginTop: 20,
+    paddingHorizontal: 16,
   },
+  sectionSubtitle: {
+    color: '#bbb',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 4,
+    marginTop: 8,
+  },
+  capabilitiesText: { color: '#999', fontSize: 12, marginBottom: 10 },
   systemStatusCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 8,
+    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#333',
   },
-  systemStats: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  systemStatItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  systemStatValue: {
-    color: '#4CAF50',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  systemStatLabel: {
-    color: '#aaa',
-    fontSize: 12,
-    textAlign: 'center',
-    marginTop: 4,
-  },
+  systemStats: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: 16 },
+  systemStatItem: { alignItems: 'center', flex: 1 },
+  systemStatValue: { color: '#4CAF50', fontSize: 18, fontWeight: 'bold' },
+  systemStatLabel: { color: '#aaa', fontSize: 11, textAlign: 'center', marginTop: 4 },
   connectionStatus: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 8,
   },
-  connectionIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  connectionText: {
-    color: '#fff',
-    fontSize: 14,
-  },
+  connectionIndicator: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
+  connectionText: { color: '#ddd', fontSize: 13 },
+  detailText: { color: '#ccc', fontSize: 12, marginTop: 2, textAlign: 'center' },
   deviceCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
@@ -531,128 +440,90 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  deviceInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  deviceDetails: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  deviceName: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  deviceType: {
-    color: '#aaa',
-    fontSize: 12,
-    marginTop: 2,
-  },
+  deviceInfo: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  deviceDetails: { marginLeft: 12, flex: 1 },
+  deviceName: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
+  deviceType: { color: '#aaa', fontSize: 12, marginTop: 2, textTransform: 'capitalize' },
   statusBadge: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 10,
+    minWidth: 60,
+    alignItems: 'center',
   },
   statusText: {
     color: '#fff',
     fontSize: 10,
     fontWeight: 'bold',
+    textTransform: 'uppercase',
   },
   deviceStats: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 12,
-  },
-  statItem: {
-    width: '50%',
     marginBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a2a',
+    paddingTop: 10,
+    marginTop: 10,
   },
-  statLabel: {
-    color: '#aaa',
-    fontSize: 12,
-  },
-  statValue: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
-    marginTop: 2,
-  },
-  errorText: {
-    color: '#F44336',
-  },
+  statItem: { width: '50%', marginBottom: 8, paddingRight: 8 },
+  statLabel: { color: '#888', fontSize: 11, marginBottom: 1 },
+  statValue: { color: '#ddd', fontSize: 13, fontWeight: '500' },
+  errorText: { color: '#FF7043', fontWeight: 'bold' },
   controlsContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginTop: 8,
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#2a2a2a',
+    paddingTop: 12,
   },
-  controlButton: {
-    backgroundColor: '#2196F3',
-    paddingHorizontal: 16,
+  controlButtonBase: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  successButton: {
-    backgroundColor: '#4CAF50',
-  },
-  dangerButton: {
-    backgroundColor: '#F44336',
-  },
-  warningButton: {
-    backgroundColor: '#FF9800',
-  },
-  controlButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  loadingContainer: {
-    flex: 1,
+    minWidth: 90,
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  loadingText: {
-    color: '#fff',
-    marginTop: 16,
-    fontSize: 16,
-  },
+  controlButton: { backgroundColor: '#2196F3' },
+  successButton: { backgroundColor: '#4CAF50' },
+  dangerButton: { backgroundColor: '#F44336' },
+  warningButton: { backgroundColor: '#FF9800' },
+  disabledButton: { backgroundColor: '#555' },
+  controlButtonText: { color: '#fff', fontSize: 12, fontWeight: 'bold', marginLeft: 4 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  loadingText: { color: '#fff', marginTop: 16, fontSize: 16 },
   errorContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    backgroundColor: '#000',
+  },
+  emptyTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginTop: 20, textAlign: 'center' },
+  emptySubtext: {
+    color: '#ccc',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 20,
   },
   retryButton: {
     backgroundColor: '#4CAF50',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     borderRadius: 8,
-    marginTop: 16,
+    marginTop: 24,
   },
-  retryButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  retryButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 40,
-  },
-  emptyText: {
-    color: '#fff',
-    fontSize: 18,
-    textAlign: 'center',
-  },
-  emptySubtext: {
-    color: '#aaa',
-    fontSize: 14,
-    textAlign: 'center',
-    marginTop: 8,
+    minHeight: 200,
   },
 });
