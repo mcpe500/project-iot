@@ -1,3 +1,4 @@
+// require('@tensorflow/tfjs-node-gpu'); // Or require('@tensorflow/tfjs-node-gpu'); if you have CUDA
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -14,6 +15,11 @@ const dotenv = require('dotenv');
 const { createSshTunnel } = require('../job/tunnel');
 const ffmpeg = require('fluent-ffmpeg'); // Added for video processing
 
+// Imports for face recognition
+const faceapi = require('face-api.js');
+const { Canvas, Image, ImageData } = require('canvas'); // Import from canvas
+faceapi.env.monkeyPatch({ Canvas, Image, ImageData }); // Apply the monkey patch
+
 // Ensure data directory exists
 const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) {
@@ -26,20 +32,18 @@ if (!fs.existsSync(recordingsDir)) {
   fs.mkdirSync(recordingsDir, { recursive: true });
 }
 
+// Ensure permitted_faces directory exists
+const permittedFacesDir = path.join(__dirname, '../permitted_faces');
+if (!fs.existsSync(permittedFacesDir)) {
+  fs.mkdirSync(permittedFacesDir, { recursive: true });
+}
+
 // Load environment variables
 dotenv.config();
 
 // Create Express app
 const app = express();
 const port = process.env.PORT || 3000;
-
-// // Middleware
-// app.use(cors({
-//   origin: process.env.CORS_ORIGIN || '*',
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
-//   credentials: true
-// }));
 
 app.use(cors('*')); // Allow all origins for simplicity, adjust as needed
 
@@ -54,6 +58,61 @@ const apiLimiter = rateLimit({
   message: 'Too many requests, please try again later'
 });
 app.use('/api/', apiLimiter);
+
+// Face Recognition Model Loading
+let faceMatcher = null;
+const modelsPath = path.join(__dirname, '../models'); // Adjust if your models are elsewhere
+
+async function loadModels() {
+  try {
+    console.log("Loading face recognition models...");
+    await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+    await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
+    await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
+    console.log("Face recognition models loaded successfully.");
+    await loadPermittedFaces(); // Load permitted faces after models are ready
+  } catch (error) {
+    console.error("Error loading face recognition models:", error);
+    console.error("Please ensure models are downloaded and correctly placed in:", modelsPath);
+  }
+}
+
+async function loadPermittedFaces() {
+  if (!faceapi.nets.faceRecognitionNet.isLoaded) {
+    console.warn("Face recognition model not loaded yet. Skipping loading permitted faces.");
+    return;
+  }
+  console.log("Loading permitted faces...");
+  const permittedDescriptors = [];
+  try {
+    const files = await fsp.readdir(permittedFacesDir);
+    for (const file of files) {
+      if (file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg') || file.toLowerCase().endsWith('.png')) {
+        const imgPath = path.join(permittedFacesDir, file);
+        const img = await canvas.loadImage(imgPath); // Use canvas.loadImage
+        const detections = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
+        if (detections) {
+          permittedDescriptors.push(new faceapi.LabeledFaceDescriptors(file, [detections.descriptor]));
+          console.log(`Loaded descriptor for ${file}`);
+        } else {
+          console.warn(`No face detected in permitted image: ${file}`);
+        }
+      }
+    }
+    if (permittedDescriptors.length > 0) {
+      faceMatcher = new faceapi.FaceMatcher(permittedDescriptors);
+      console.log(`Loaded ${permittedDescriptors.length} permitted face(s).`);
+    } else {
+      faceMatcher = null; // Reset if no faces are loaded
+      console.log("No permitted faces loaded.");
+    }
+  } catch (error) {
+    console.error("Error loading permitted faces:", error);
+    faceMatcher = null;
+  }
+}
+
+loadModels(); // Load models on server startup
 
 // Data store implementation
 class DataStore {
@@ -196,40 +255,83 @@ app.post('/api/v1/ingest/sensor-data', (req, res) => {
 });
 
 // Stream endpoint
-app.post('/api/v1/stream/stream', multer().single('image'), (req, res) => {
+const streamUpload = multer({ storage: multer.memoryStorage() }); // Use memory storage for direct processing
+app.post('/api/v1/stream/stream', streamUpload.single('image'), async (req, res) => { // Make async
   if (!req.file) {
     return res.status(400).json({ error: 'No image provided' });
   }
-  
-  // Save the image to the data directory
+
   const timestamp = Date.now();
-  const deviceId = req.body.deviceId || 'unknown_device'; // Get deviceId from request body or use a default
+  const deviceId = req.body.deviceId || 'unknown_device';
   const filename = `${deviceId}_${timestamp}.jpg`;
   const filePath = path.join(dataDir, filename);
 
-  fs.writeFile(filePath, req.file.buffer, (err) => {
-    if (err) {
-      console.error('Error saving image:', err);
-      // Decide if you want to send an error response or still broadcast
-      // For now, we'll log and continue to broadcast
-    } else {
-      console.log('Image saved:', filePath);
-      cleanupOldRecordings(dataDir, 30000); // Cleanup files older than 30 seconds
-    }
-  });
+  let recognitionStatus = 'pending';
+  let recognizedAs = null;
 
-  // Broadcast to WebSocket clients
-  wss.clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify({
-        type: 'frame',
-        data: req.file.buffer.toString('base64'),
-        timestamp: Date.now()
-      }));
+  try {
+    // Save the image to the data directory
+    await fsp.writeFile(filePath, req.file.buffer);
+    console.log('Frame saved:', filePath);
+
+    // Perform face recognition if models are loaded
+    if (faceMatcher) {
+      try {
+        const img = await canvas.loadImage(req.file.buffer); // Load image from buffer
+        const detections = await faceapi.detectAllFaces(img).withFaceLandmarks().withFaceDescriptors();
+        
+        if (detections.length > 0) {
+          recognitionStatus = 'unknown_face'; // Default if faces are detected but not matched
+          for (const detection of detections) {
+            const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+            if (bestMatch && bestMatch.label !== 'unknown' && bestMatch.distance < 0.5) { // Adjust threshold as needed (0.6 is common)
+              recognitionStatus = 'permitted_face';
+              recognizedAs = bestMatch.label;
+              console.log(`Permitted face detected: ${recognizedAs} (Distance: ${bestMatch.distance})`);
+              break; // Stop if one permitted face is found
+            } else if (bestMatch) {
+               console.log(`Detected face, best match: ${bestMatch.label} (Distance: ${bestMatch.distance}) - Not permitted or distance too high.`);
+            }
+          }
+           if (recognitionStatus === 'unknown_face' && recognizedAs === null) {
+             console.log('Unknown face(s) detected in stream.');
+           }
+        } else {
+          recognitionStatus = 'no_face_detected';
+          console.log('No faces detected in stream.');
+        }
+      } catch (recError) {
+        console.error("Error during face recognition:", recError);
+        recognitionStatus = 'recognition_error';
+      }
+    } else {
+      recognitionStatus = 'models_not_loaded';
+      console.warn("Face recognition models not loaded. Skipping recognition.");
     }
-  });
-  
-  res.json({ message: 'Frame received' });
+
+    // Broadcast to WebSocket clients
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+          type: 'new_frame',
+          deviceId,
+          timestamp,
+          filename,
+          url: `/data/${filename}`,
+          recognition: {
+            status: recognitionStatus,
+            recognizedAs: recognizedAs
+          }
+        }));
+      }
+    });
+
+    res.json({ message: 'Frame received', recognitionStatus, recognizedAs });
+
+  } catch (err) {
+    console.error('Error processing frame:', err);
+    res.status(500).json({ error: 'Failed to process frame' });
+  }
 });
 
 // Endpoint to save the last 30 seconds of frames as a video recording
@@ -442,6 +544,44 @@ app.get('/api/v1/stream/frames', async (req, res) => {
   } catch (err) {
     console.error("Error reading data directory for frames:", err);
     res.status(500).json({ error: 'Failed to retrieve image frames' });
+  }
+});
+
+// Endpoint to add a new permitted face
+const permittedFaceUpload = multer({ storage: multer.memoryStorage() });
+app.post('/api/v1/recognition/add-permitted-face', permittedFaceUpload.single('image'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image provided for permitted face.' });
+  }
+  if (!faceapi.nets.faceRecognitionNet.isLoaded) {
+    return res.status(503).json({ error: 'Face recognition models not ready. Please try again later.' });
+  }
+
+  const subjectName = req.body.name || `subject_${Date.now()}`;
+  // Sanitize subjectName to be a valid filename, e.g., remove/replace special characters
+  const safeSubjectName = subjectName.replace(/[^a-z0-9_.-]/gi, '_');
+  const filename = `${safeSubjectName}.jpg`; // Or use a unique ID and store name in metadata
+  const filePath = path.join(permittedFacesDir, filename);
+
+  try {
+    // Check if face is detectable before saving (optional, but good for UX)
+    const tempImage = await canvas.loadImage(req.file.buffer);
+    const detection = await faceapi.detectSingleFace(tempImage).withFaceLandmarks().withFaceDescriptor();
+    
+    if (!detection) {
+      return res.status(400).json({ error: 'No face detected in the uploaded image. Please provide a clear frontal face image.' });
+    }
+
+    await fsp.writeFile(filePath, req.file.buffer);
+    console.log(`Permitted face image saved: ${filePath}`);
+    
+    // Reload permitted faces to update the faceMatcher
+    await loadPermittedFaces(); 
+    
+    res.json({ success: true, message: `Permitted face '${safeSubjectName}' added successfully.`, filename });
+  } catch (error) {
+    console.error("Error adding permitted face:", error);
+    res.status(500).json({ error: 'Failed to add permitted face.', details: error.message });
   }
 });
 
