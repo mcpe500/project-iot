@@ -5,6 +5,6 @@ idf_component_register(
     SRCS main.c         # list the source files of this component
     INCLUDE_DIRS        # optional, add here public include directories
     PRIV_INCLUDE_DIRS   # optional, add here private include directories
-    REQUIRES cjson esp_camera nvs_flash esp_http_client            # optional, list the public requirements (component names)
+    REQUIRES nvs_flash esp_http_client            # optional, list the public requirements (component names)
     PRIV_REQUIRES       # optional, list the private requirements
 )
