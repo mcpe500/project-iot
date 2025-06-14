@@ -8,212 +8,237 @@ import {
   Alert,
   RefreshControl,
   ActivityIndicator,
-  StatusBar
+  StatusBar,
+  Modal,
+  Dimensions
 } from 'react-native';
 import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { IconSymbol } from '@/components/ui/IconSymbol';
-import { CONFIG } from '../config';
-import { useRouter } from 'expo-router'; // Import useRouter
+import { IconSymbol } from '@/components/IconSymbol';
+import { CONFIG } from '@/app/config';
+import { Video, ResizeMode } from 'expo-av';
 
-interface Recording {
+interface MediaItem {
   id: string;
   name: string;
-  frameCount: number;
-  createdAt: string;
-  size: number;
   url: string;
+  type: 'video' | 'image';
+  createdAt: string;
+  size?: number;
+  filename: string;
 }
 
-export default function RecordingsScreen() {
-  const [recordings, setRecordings] = useState<Recording[]>([]);
+type ActiveTab = 'videos' | 'frames';
+
+export default function ExploreScreen() {
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter(); // Initialize useRouter
+  const [activeTab, setActiveTab] = useState<ActiveTab>('videos');
+  const [isVideoPlayerVisible, setIsVideoPlayerVisible] = useState(false);
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const videoRef = React.useRef<Video>(null);
 
-  useEffect(() => {
-    loadRecordings();
-  }, []);
+  const loadMedia = useCallback(async (tab: ActiveTab, isInitialLoad = false) => {
+    if (isInitialLoad) setLoading(true);
+    setError(null);
+    const endpoint = tab === 'videos'
+      ? `${CONFIG.BACKEND_URL}/api/v1/stream/recordings`
+      : `${CONFIG.BACKEND_URL}/api/v1/stream/frames`;
 
-  const loadRecordings = async () => {
     try {
-      setLoading(true); // Ensure loading is true at the start of a load
-      setError(null);
-      const response = await axios.get(`${CONFIG.BACKEND_URL}/api/v1/stream/recordings`);
-
-      if (response.data && Array.isArray(response.data.data)) {
-        const fetchedRecordings = response.data.data.map((rec: any) => ({
-          id: String(rec.id || rec.name), // Ensure id is a string
-          name: rec.name,
-          frameCount: rec.frameCount || (rec.durationSeconds ? rec.durationSeconds * 10 : 0), // Estimate frameCount if not present
-          createdAt: rec.createdAt,
-          size: rec.size,
-          url: rec.url,
-        }));
-        setRecordings(fetchedRecordings);
+      const response = await axios.get(endpoint, { timeout: 10000 });
+      let rawItems: any[] = [];
+      
+      if (response.data && response.data.success === true && Array.isArray(response.data.data)) {
+        rawItems = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        rawItems = response.data;
       } else {
-        console.warn('Unexpected response data format:', response.data);
-        setRecordings([]); // Set to empty array on unexpected format
+        throw new Error('Invalid data structure from server.');
       }
-    } catch (error) {
-      console.error('Error loading recordings:', error);
-      setError('Failed to connect to server. Please check your backend connection.');
-      setRecordings([]); // Clear recordings on error
+      
+      const transformedItems: MediaItem[] = rawItems.map((item: any) => {
+        const apiUrl = CONFIG.BACKEND_URL;
+        const originalFilename = item.id || item.name || `unknown_${Date.now()}`;
+        const nameToDisplay = item.name || originalFilename;
+
+        return {
+          id: originalFilename,
+          name: nameToDisplay,
+          url: item.url ? (item.url.startsWith('http') ? item.url : `${apiUrl}${item.url}`) : '',
+          type: tab === 'videos' ? 'video' : 'image' as 'video' | 'image',
+          createdAt: item.createdAt || new Date().toISOString(),
+          size: item.size,
+          filename: originalFilename,
+        };
+      }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      setMediaItems(transformedItems);
+    } catch (err) {
+      console.error(`Error loading ${tab}:`, err);
+      setError(axios.isAxiosError(err) && !err.response ? 
+        'Cannot connect to the server.' : 'Failed to load media.');
+      setMediaItems([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadMedia(activeTab, true);
+  }, [activeTab]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadRecordings();
-  }, []);
+    loadMedia(activeTab);
+  }, [activeTab, loadMedia]);
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+  const handlePlayVideo = (url: string) => {
+    if (!url) {
+      Alert.alert("Error", "Video URL is invalid.");
+      return;
+    }
+    setSelectedVideoUrl(url);
+    setIsVideoPlayerVisible(true);
+  };
+  
+  const handleDeleteVideo = async (filename: string) => {
+    try {
+      const endpoint = `${CONFIG.BACKEND_URL}/api/v1/stream/recordings/${filename}`;
+      await axios.delete(endpoint);
+      
+      // Optimistic UI update
+      setMediaItems(prev => prev.filter(item => item.filename !== filename));
+    } catch (err) {
+      console.error(`Error deleting video ${filename}:`, err);
+      Alert.alert('Error', 'Failed to delete the recording.');
+      // Re-fetch data to revert UI
+      loadMedia('videos');
+    }
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  const getDurationText = (frameCount: number) => {
-    const seconds = Math.round(frameCount / 10); // Assuming 10 FPS
-    return `${seconds}s (${frameCount} frames)`;
-  };
-
-  const showRecordingDetails = (recording: Recording) => {
+  const confirmDelete = (item: MediaItem) => {
     Alert.alert(
-      'Recording Details',
-      `Name: ${recording.name}\n` +
-      `Created: ${formatDate(recording.createdAt)}\n` +
-      `Duration: ${getDurationText(recording.frameCount)}\n` +
-      `Frames: ${recording.frameCount}\n` +
-      `Size: ${formatFileSize(recording.size)}`,
+      'Delete Recording',
+      `Are you sure you want to delete "${item.filename}"?`,
       [
-        { text: 'OK' }
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => handleDeleteVideo(item.filename) },
       ]
     );
   };
 
-  const playVideoRecording = (recording: Recording) => {
-    if (!recording.url) {
-      Alert.alert("Error", "Video URL is missing, cannot play.");
-      return;
-    }
-    console.log(`Navigating to play video: ${recording.name}, URL: ${recording.url}`);
-    router.push({
-      pathname: "/recordings", // Path to recordings.tsx screen
-      params: { videoUrl: recording.url, videoName: recording.name, initialTab: 'videos' },
-    });
-  };
-
-  const keyExtractor = (item: Recording) => item.id;
-
-  const renderRecordingItem = ({ item }: { item: Recording }) => (
+  const renderMediaItem = ({ item }: { item: MediaItem }) => (
     <TouchableOpacity
-      style={styles.recordingItem}
-      onPress={() => playVideoRecording(item)} // Updated onPress
+      style={styles.mediaItem}
+      onPress={() => item.type === 'video' ? handlePlayVideo(item.url) : null}
     >
-      <IconSymbol name="play.rectangle.fill" size={28} color="#4CAF50" style={styles.recordingIcon} />
-      <View style={styles.recordingInfo}>
-        <Text style={styles.recordingName} numberOfLines={1}>{item.name}</Text>
-        <Text style={styles.recordingDetails}>
-          {formatDate(item.createdAt)} • {formatFileSize(item.size)}
-        </Text>
-        <Text style={styles.recordingMeta}>
-          {getDurationText(item.frameCount)}
+      <View style={styles.mediaIcon}>
+        <IconSymbol name={item.type === 'video' ? "video" : "image"} size={24} color={item.type === 'video' ? "#4CAF50" : "#007AFF"} />
+      </View>
+      <View style={styles.mediaInfo}>
+        <Text style={styles.mediaName} numberOfLines={1}>{item.name}</Text>
+        <Text style={styles.mediaDetails}>
+          {new Date(item.createdAt).toLocaleString()}
         </Text>
       </View>
-      <IconSymbol name="chevron.right" size={18} color="#555" />
+      {item.type === 'video' && (
+        <TouchableOpacity onPress={() => confirmDelete(item)} style={styles.deleteButton}>
+          <IconSymbol name="trash-can-outline" size={22} color="#FF6347" />
+        </TouchableOpacity>
+      )}
     </TouchableOpacity>
   );
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyContainer}>
-      <IconSymbol name="video.slash" size={64} color="#666" />
-      <ThemedText style={styles.emptyTitle}>No Recordings Yet</ThemedText>
-      <ThemedText style={styles.emptySubtitle}>
-        Recordings will appear here after you save video from the live stream.
-        Go to the Live Stream tab and tap "Save Last 30 Seconds" to create your first recording.
-      </ThemedText>
-      <TouchableOpacity
-        style={styles.refreshButton}
-        onPress={() => loadRecordings()}
-      >
-        <Text style={styles.refreshButtonText}>Refresh</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  const renderErrorState = () => (
-    <View style={styles.emptyContainer}>
-      <IconSymbol name="exclamationmark.triangle" size={64} color="#FF4444" />
-      <ThemedText style={styles.emptyTitle}>Connection Error</ThemedText>
-      <ThemedText style={styles.emptySubtitle}>
-        {error}
-      </ThemedText>
-      <TouchableOpacity
-        style={styles.refreshButton}
-        onPress={() => {
-          setLoading(true);
-          loadRecordings();
-        }}
-      >
-        <Text style={styles.refreshButtonText}>Retry</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
-  if (loading && recordings.length === 0) { // Show loader only if no items yet
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#4CAF50" />
+        </View>
+      );
+    }
+    if (error) {
+      return (
+        <View style={styles.centered}>
+          <IconSymbol name="alert-circle-outline" size={48} color="#FF4444" />
+          <ThemedText style={styles.emptyTitle}>Connection Error</ThemedText>
+          <ThemedText style={styles.emptySubtitle}>{error}</ThemedText>
+          <TouchableOpacity style={styles.refreshButton} onPress={() => loadMedia(activeTab, true)}>
+            <Text style={styles.refreshButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    if (mediaItems.length === 0) {
+      return (
+        <View style={styles.centered}>
+          <IconSymbol name={activeTab === 'videos' ? "video-off" : "image-off-outline"} size={48} color="#666" />
+          <ThemedText style={styles.emptyTitle}>No {activeTab} found</ThemedText>
+          <ThemedText style={styles.emptySubtitle}>Pull down to refresh</ThemedText>
+        </View>
+      );
+    }
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading Recordings...</Text>
-      </View>
+      <FlatList
+        data={mediaItems}
+        renderItem={renderMediaItem}
+        keyExtractor={(item) => item.id}
+        style={styles.list}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#4CAF50']} />}
+      />
     );
-  }
+  };
 
   return (
     <ThemedView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#000" />
+      <StatusBar barStyle="light-content" backgroundColor="#1a1a1a" />
+      {selectedVideoUrl && (
+        <Modal
+          animationType="slide"
+          visible={isVideoPlayerVisible}
+          supportedOrientations={['portrait', 'landscape']}
+          onRequestClose={() => setIsVideoPlayerVisible(false)}
+        >
+          <View style={styles.videoModalContainer}>
+            <Video
+              ref={videoRef}
+              style={styles.videoPlayer}
+              source={{ uri: selectedVideoUrl }}
+              useNativeControls
+              resizeMode={ResizeMode.CONTAIN}
+            />
+            <TouchableOpacity style={styles.closeButton} onPress={() => setIsVideoPlayerVisible(false)}>
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
+
       <View style={styles.header}>
-        <Text style={styles.title}>Saved Recordings</Text>
-        <TouchableOpacity onPress={onRefresh} style={styles.refreshIconButton} disabled={refreshing}>
-          {refreshing ? <ActivityIndicator size="small" color="#fff" /> : <IconSymbol name="arrow.clockwise" size={20} color="#fff" />}
+        <ThemedText style={styles.title}>Media Library</ThemedText>
+      </View>
+
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'videos' && styles.activeTab]}
+          onPress={() => setActiveTab('videos')}
+        >
+          <Text style={[styles.tabText, activeTab === 'videos' && styles.activeTabText]}>Videos</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tabButton, activeTab === 'frames' && styles.activeTab]}
+          onPress={() => setActiveTab('frames')}
+        >
+          <Text style={[styles.tabText, activeTab === 'frames' && styles.activeTabText]}>Frames</Text>
         </TouchableOpacity>
       </View>
-      {error && !refreshing ? ( // Show error only if not also refreshing (to avoid flicker)
-        renderErrorState()
-      ) : (
-        <FlatList
-          data={recordings}
-          renderItem={renderRecordingItem}
-          keyExtractor={keyExtractor}
-          style={styles.list}
-          contentContainerStyle={recordings.length === 0 && !loading ? styles.emptyList : { paddingBottom: 20 }}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={['#4CAF50']}
-              tintColor="#4CAF50"
-              title="Pull to refresh"
-              titleColor="#999"
-            />
-          }
-          ListEmptyComponent={!loading ? renderEmptyState : null} // Show empty state only if not loading
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+      
+      {renderContent()}
     </ThemedView>
   );
 }
@@ -224,107 +249,117 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: StatusBar.currentHeight ? StatusBar.currentHeight + 10 : 50,
+    paddingTop: (StatusBar.currentHeight || 20) + 10,
     paddingBottom: 15,
+    paddingHorizontal: 20,
     backgroundColor: '#1a1a1a',
   },
   title: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
   },
-  refreshIconButton: {
-    padding: 8,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#fff',
-    marginTop: 16,
-    fontSize: 16,
-  },
-  list: {
-    flex: 1,
-  },
-  emptyList: {
-    flex: 1,
-  },
-  recordingItem: {
+  tabContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#1a1a1a',
-    marginHorizontal: 16,
-    marginVertical: 4,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#333',
+    paddingVertical: 10,
   },
-  recordingIcon: {
-    marginRight: 12,
+  tabButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    marginHorizontal: 10,
+    borderRadius: 20,
   },
-  recordingInfo: {
-    flex: 1,
+  activeTab: {
+    backgroundColor: '#007AFF',
   },
-  recordingName: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  recordingDetails: {
+  tabText: {
     color: '#ccc',
-    fontSize: 14,
-    marginBottom: 2,
+    fontWeight: '600',
   },
-  recordingMeta: {
-    color: '#888',
-    fontSize: 12,
+  activeTabText: {
+    color: '#fff',
   },
-  recordingActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  actionButton: {
-    padding: 8,
-  },
-  emptyContainer: {
+  centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    padding: 20,
   },
   emptyTitle: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginTop: 20,
-    textAlign: 'center',
+    marginTop: 15,
   },
   emptySubtitle: {
     color: '#ccc',
     fontSize: 14,
+    marginTop: 5,
     textAlign: 'center',
-    marginTop: 12,
-    lineHeight: 20,
   },
   refreshButton: {
     backgroundColor: '#4CAF50',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
     borderRadius: 20,
     marginTop: 20,
   },
   refreshButtonText: {
     color: '#fff',
-    fontSize: 14,
     fontWeight: 'bold',
+  },
+  list: {
+    flex: 1,
+  },
+  mediaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1C1C1E',
+    marginHorizontal: 16,
+    marginVertical: 6,
+    padding: 16,
+    borderRadius: 12,
+  },
+  mediaIcon: {
+    marginRight: 16,
+  },
+  mediaInfo: {
+    flex: 1,
+  },
+  mediaName: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  mediaDetails: {
+    color: '#8E8E93',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  deleteButton: {
+    padding: 8,
+  },
+  videoModalContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+  },
+  videoPlayer: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+  },
+  closeButton: {
+    position: 'absolute',
+    top: (StatusBar.currentHeight || 40) + 10,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 10,
+    borderRadius: 20,
+  },
+  closeButtonText: {
+    color: '#fff',
+    fontSize: 16,
   },
 });
