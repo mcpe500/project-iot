@@ -1,38 +1,26 @@
 import fp from 'fastify-plugin';
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { createErrorResponse, validateApiKey } from '@/utils/helpers';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 /**
- * Authentication plugin for API key validation
+ * Authentication plugin - DISABLED for development
+ * All requests are allowed without API key validation
  */
 export default fp(async function authPlugin(fastify: FastifyInstance) {
-  fastify.decorateRequest('isAuthenticated', false);
-  
-  fastify.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
-    // Skip auth for health check and some public endpoints
-    const publicPaths = ['/health', '/api/v1/config/media'];
-    const isPublicPath = publicPaths.some(path => request.url.startsWith(path));
+  fastify.decorateRequest('isAuthenticated', true);
+    // Log all requests for debugging
+  fastify.addHook('preHandler', async (request: FastifyRequest) => {
+    fastify.log.info({
+      method: request.method,
+      url: request.url,
+      headers: {
+        'content-type': request.headers['content-type'],
+        'user-agent': request.headers['user-agent'],
+        'content-length': request.headers['content-length']
+      },
+      ip: request.ip
+    }, 'Request received');
     
-    if (isPublicPath) {
-      return;
-    }
-
-    // Check for API key in headers
-    const apiKey = request.headers['x-api-key'] as string;
-    
-    if (!apiKey) {
-      return reply
-        .status(401)
-        .send(createErrorResponse('API key required'));
-    }
-
-    if (!validateApiKey(apiKey)) {
-      return reply
-        .status(401)
-        .send(createErrorResponse('Invalid API key'));
-    }
-
-    // Mark request as authenticated
+    // Mark all requests as authenticated
     (request as any).isAuthenticated = true;
   });
 }, {

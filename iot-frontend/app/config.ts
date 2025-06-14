@@ -3,8 +3,8 @@
 
 export const CONFIG = {
   // Backend server configuration
-  BACKEND_URL: 'http://SERVER_IP:9002',
-  WS_URL: 'ws://SERVER_IP:9002',
+  BACKEND_URL: 'http://SERVER_IP:9003',
+  WS_URL: 'ws://SERVER_IP:9003',
   API_KEY: 'dev-api-key-change-in-production', // Same key as Arduino
   
   // Camera configuration

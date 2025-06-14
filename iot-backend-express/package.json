@@ -1,0 +1,44 @@
+{
+  "name": "iot-backend-express",
+  "version": "1.0.0",
+  "description": "Production-grade IoT backend service using Express and Node.js",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "nodemon --watch src src/server.js",
+    "start": "node dist/server.js",
+    "build": "tsc",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint . --ext .ts",
+    "check-types": "tsc --noEmit"
+  },
+  "keywords": ["iot", "express", "nodejs", "websocket", "esp32", "sensors"],
+  "author": "IoT Developer",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.3.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "ws": "^8.18.0",
+    "ssh2": "^1.15.0",
+    "@google/generative-ai": "^0.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/cors": "^2.8.17",
+    "@types/morgan": "^1.9.9",
+    "@types/multer": "^1.4.11",
+    "@types/ws": "^8.5.11",
+    "@types/ssh2": "^1.15.0",
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.3",
+    "ts-node": "^10.9.2",
+    "nodemon": "^3.1.4",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/parser": "^7.16.0",
+    "@typescript-eslint/eslint-plugin": "^7.16.0"
+  }
+}

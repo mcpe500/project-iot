@@ -72,9 +72,8 @@ export default function DevicesScreen() {
   const loadDevices = async () => {
     try {
       const response = await api.get('/api/v1/devices/devices');
-      
-      if (response.data.success) {
-        setDevices(response.data.data.devices);
+      if (response.data) {
+        setDevices(response.data);
         setError(null);
       } else {
         setError('Failed to load devices');
