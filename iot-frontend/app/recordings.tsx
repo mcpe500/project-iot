@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -17,18 +17,20 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { CONFIG } from './config';
-import { Video, ResizeMode } from 'expo-av';
+import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
+import { useLocalSearchParams } from 'expo-router';
 
 // Interface for media items (videos or images)
 interface MediaItem {
-  id: string;          // original filename, unique
-  name: string;        // display name, can be derived from filename
-  url: string;         // full URL to media
-  createdAt: string;   // ISO string
-  type: 'video' | 'image';
-  frameCount?: number; // For videos (from backend) or images (placeholder)
-  size?: number;       // File size (placeholder or from backend if available)
-  durationText?: string; // For display
+  id: string;
+  name: string; // User-facing display name
+  url: string;
+  type: 'video' | 'image'; // Literal type
+  createdAt: string;
+  size?: number;
+  filename: string; // Original filename from backend (item.name or item.id)
+  frameCount?: number; // Optional: number of frames
+  durationText?: string; // Optional: human-readable duration like "1:23"
 }
 
 type ActiveTab = 'videos' | 'frames';
@@ -43,12 +45,29 @@ export default function RecordingsScreen() {
   // State for video player modal
   const [isVideoPlayerVisible, setIsVideoPlayerVisible] = useState(false);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [videoStatus, setVideoStatus] = useState<AVPlaybackStatus | null>(null);
+  const videoPlayerRef = useRef<Video>(null);
+
+  const params = useLocalSearchParams<{ videoUrl?: string; videoName?: string; initialTab?: ActiveTab }>();
 
   useEffect(() => {
-    loadMedia(activeTab, true);
-  }, [activeTab]);
+    const { initialTab: tabFromParams } = params;
+    if (tabFromParams && tabFromParams !== activeTab) {
+      setActiveTab(tabFromParams);
+    }
+  }, [params.initialTab]);
 
-  const loadMedia = async (tabType: ActiveTab, initialLoad = false) => {
+  useEffect(() => {
+    loadMedia(activeTab, mediaItems.length === 0);
+
+    const { videoUrl: urlFromParams } = params;
+    if (urlFromParams && activeTab === 'videos') {
+      const videoNameFromParams = params.videoName || 'Video';
+      handlePlayVideo(urlFromParams);
+    }
+  }, [activeTab, params.videoUrl, params.videoName]);
+
+  const loadMedia = useCallback(async (tabType: ActiveTab, initialLoad = false) => {
     if (initialLoad) setLoading(true);
     setError(null);
 
@@ -73,28 +92,76 @@ export default function RecordingsScreen() {
       }
       
       const transformedItems: MediaItem[] = rawItems.map((item: any) => {
-        let createdAt = item.createdAt;
-        let frameCount = item.frameCount;
-        let name = item.filename;
-        let type: 'video' | 'image' = tabType === 'videos' ? 'video' : 'image';
+        const apiUrl = CONFIG.BACKEND_URL;
+        
+        let originalFilename: string = item.name || item.id; // Prefer item.name, then item.id
+        if (typeof originalFilename !== 'string' || originalFilename.trim() === '') {
+          originalFilename = `unknown_${tabType}_${Date.now()}${tabType === 'frames' ? '.jpg' : '.mp4'}`;
+          console.warn(`Item received without valid name/id. Using fallback filename: ${originalFilename}`, item);
+        }
+
+        let nameToDisplay: string;
+        let timestampMs: number;
+        let frameCountVal: number | undefined = undefined;
+        let durationTextVal: string | undefined = undefined;
 
         if (tabType === 'frames') {
-          const timestampMatch = item.filename.match(/_(\d+)\.(jpg|jpeg|png)$/i);
-          const timestamp = timestampMatch ? parseInt(timestampMatch[1], 10) : Date.now();
-          createdAt = new Date(timestamp).toISOString();
-          frameCount = 1;
+          const match = originalFilename.match(/(\d{13,})\.jpg$/) || originalFilename.match(/_(\d{13,})\.jpg$/);
+          if (match && match[1]) {
+            timestampMs = parseInt(match[1], 10);
+          } else if (item.createdAt && typeof item.createdAt === 'string') {
+            timestampMs = Date.parse(item.createdAt);
+          } else if (typeof item.createdAt === 'number') { // Handle if createdAt is already a timestamp
+            timestampMs = item.createdAt; 
+          } else {
+            timestampMs = Date.now();
+          }
+          if (isNaN(timestampMs)) timestampMs = Date.now();
+          nameToDisplay = `Frame ${new Date(timestampMs).toLocaleString()}`;
+          frameCountVal = 1; // An image is considered 1 frame
+        } else { // videos
+          nameToDisplay = params.videoName && item.url === params.videoUrl ? params.videoName : originalFilename; 
+          if (item.createdAt && typeof item.createdAt === 'string') {
+            timestampMs = Date.parse(item.createdAt);
+          } else if (typeof item.createdAt === 'number') {
+            timestampMs = item.createdAt;
+          } else {
+            timestampMs = Date.now();
+          }
+          if (isNaN(timestampMs)) timestampMs = Date.now();
+          
+          // Populate frameCount and durationText if backend provides them for videos
+          if (typeof item.frameCount === 'number') {
+            frameCountVal = item.frameCount;
+          }
+          if (typeof item.durationSeconds === 'number') {
+            const minutes = Math.floor(item.durationSeconds / 60);
+            const seconds = Math.floor(item.durationSeconds % 60);
+            durationTextVal = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+          } else if (typeof item.durationText === 'string') { // Or if backend sends durationText directly
+            durationTextVal = item.durationText;
+          }
         }
         
-        return {
-          id: item.filename,
-          name: name,
-          url: `${CONFIG.BACKEND_URL}${item.url}`,
-          createdAt: createdAt || new Date(0).toISOString(),
-          type: type,
-          frameCount: frameCount,
-          size: item.size || 0,
-          durationText: type === 'video' ? getDurationText(frameCount || 0, item.fps || 10) : '1 frame'
+        const idStr = String(item.id || originalFilename);
+        const createdAtStr = item.createdAt ? String(item.createdAt) : new Date(timestampMs).toISOString();
+        const urlStr = item.url ? (item.url.startsWith('http') ? item.url : `${apiUrl}${item.url}`) : '';
+        if (!item.url) {
+            console.warn(`Item '${originalFilename}' missing URL.`, item);
+        }
+
+        const mediaItem: MediaItem = {
+          id: idStr,
+          name: nameToDisplay,
+          url: urlStr,
+          type: tabType === 'videos' ? 'video' : 'image', // Assign literal type
+          createdAt: createdAtStr,
+          size: typeof item.size === 'number' ? item.size : undefined,
+          filename: originalFilename,
+          frameCount: frameCountVal,
+          durationText: durationTextVal,
         };
+        return mediaItem;
       }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
       
       setMediaItems(transformedItems);
@@ -106,7 +173,7 @@ export default function RecordingsScreen() {
         errorMessage += 'Cannot connect to the server. Please check the backend and network connection.';
       } else if (axios.isAxiosError(err) && err.response?.status === 404 && tabType === 'frames') {
         errorMessage += 'The endpoint for image frames might not be implemented on the backend.';
-      } else if (err instanceof Error) { // Type guard for Error
+      } else if (err instanceof Error) {
         errorMessage += err.message;
       } else {
         errorMessage += 'An unknown error occurred.';
@@ -117,7 +184,7 @@ export default function RecordingsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [activeTab, params.videoName, params.videoUrl]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -129,6 +196,11 @@ export default function RecordingsScreen() {
   };
 
   const handlePlayVideo = (url: string) => {
+    if (!url) {
+      Alert.alert("Error", "Video URL is invalid.");
+      console.error("handlePlayVideo called with invalid URL:", url);
+      return;
+    }
     setSelectedVideoUrl(url);
     setIsVideoPlayerVisible(true);
   };
@@ -285,11 +357,15 @@ export default function RecordingsScreen() {
         onRequestClose={() => {
           setIsVideoPlayerVisible(false);
           setSelectedVideoUrl(null);
+          if (videoPlayerRef.current) {
+            videoPlayerRef.current.unloadAsync();
+          }
         }}
       >
         <View style={styles.videoModalContainer}>
           {selectedVideoUrl && (
             <Video
+              ref={videoPlayerRef}
               source={{ uri: selectedVideoUrl }}
               rate={1.0}
               volume={1.0}
@@ -297,10 +373,12 @@ export default function RecordingsScreen() {
               resizeMode={ResizeMode.CONTAIN}
               useNativeControls
               style={styles.videoPlayer}
-              onError={(error) => {
-                console.error('Video playback error:', error);
-                Alert.alert('Playback Error', 'Could not play this video.');
-                setIsVideoPlayerVisible(false);
+              onPlaybackStatusUpdate={status => setVideoStatus(() => status)}
+              onError={(errorMessage: string) => { // Corrected type to string
+                console.error('Video player error:', errorMessage);
+                Alert.alert("Video Error", `Could not play video: ${errorMessage}`);
+                setIsVideoPlayerVisible(false); // Close modal on error
+                setSelectedVideoUrl(null);
               }}
             />
           )}
@@ -309,6 +387,9 @@ export default function RecordingsScreen() {
             onPress={() => {
               setIsVideoPlayerVisible(false);
               setSelectedVideoUrl(null);
+              if (videoPlayerRef.current) {
+                videoPlayerRef.current.unloadAsync();
+              }
             }}
           >
             <Text style={styles.closeButtonText}>Close</Text>

@@ -117,6 +117,22 @@ wss.on('connection', (ws) => {
   }));
 });
 
+// Placeholder for in-memory device data
+let devices = [
+  { id: "device1", name: "Living Room Cam", ipAddress: "192.168.1.101", uptime: "12h 30m", freeHeap: "512KB", lastSeen: new Date().toISOString(), errors: 0, capabilities: ["stream", "record", "ptz"], status: "online" },
+  { id: "device2", name: "Kitchen Sensor", ipAddress: "192.168.1.102", uptime: "2d 5h", freeHeap: "1024KB", lastSeen: new Date().toISOString(), errors: 1, capabilities: ["temperature", "humidity"], status: "warning" },
+  { id: "device3", name: "Garage Door", ipAddress: "192.168.1.103", uptime: "5h 15m", freeHeap: "256KB", lastSeen: new Date(Date.now() - 3600000 * 3).toISOString(), errors: 0, capabilities: ["open", "close", "status"], status: "offline" },
+];
+
+// Placeholder for system status
+let systemStatus = {
+  totalDevices: devices.length,
+  onlineDevices: devices.filter(d => d.status === "online").length,
+  systemLoad: "Low",
+  storageUsage: "45%",
+  lastBackup: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
+};
+
 // API Routes
 
 // Health check
@@ -349,33 +365,132 @@ app.get('/api/v1/stream/recordings', async (req, res) => {
   try {
     const files = await fsp.readdir(recordingsDir);
     // Filter for .mp4 files and map to desired format
-    const videoRecordings = files
+    const videoRecordingsPromises = files
       .filter(file => file.toLowerCase().endsWith('.mp4'))
-      .map(file => {
-        // Attempt to extract timestamp from filename like rec_1678886400000.mp4
-        let createdAt = null;
-        const nameParts = file.split('_');
-        if (nameParts.length > 1) {
-            const tsPart = nameParts[1].split('.')[0];
-            const timestamp = parseInt(tsPart, 10);
-            if (!isNaN(timestamp)) {
-                createdAt = new Date(timestamp).toISOString();
-            }
-        }
-        return {
-          filename: file,
-          url: `/recordings/${file}`, // URL to access the video
-          createdAt: createdAt || new Date(0).toISOString(), // Fallback if timestamp parsing fails
-          // You might want to use fsp.stat to get actual file creation time or size later
-        };
-      })
-      .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // Sort newest first
+      .map(async (file) => {
+        const filePath = path.join(recordingsDir, file);
+        try {
+          const stats = await fsp.stat(filePath); // Use async stat
 
+          let createdAt = stats.birthtime || stats.mtime; // Fallback to mtime
+          const match = file.match(/rec_(\d+)\.mp4/);
+          if (match && match[1]) {
+            createdAt = new Date(parseInt(match[1], 10));
+          }
+
+          return {
+            id: file, // Use filename as ID
+            name: file,
+            url: `/recordings/${file}`, // Relative URL
+            createdAt: createdAt.toISOString(),
+            size: stats.size,
+            type: 'video',
+            // frameCount and durationText are harder to get from just listing files.
+            // These were part of the POST /api/v1/stream/record response.
+            // The frontend should handle these as optional for listed items.
+          };
+        } catch (statError) {
+          console.error(`Failed to get stats for ${filePath}:`, statError);
+          return null; // Skip this file if stat fails
+        }
+      });
+
+    const videoRecordings = (await Promise.all(videoRecordingsPromises))
+      .filter(Boolean) // Remove any nulls from failed stats
+      .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
     res.json(videoRecordings);
   } catch (err) {
     console.error("Error reading recordings directory:", err);
     return res.status(500).json({ error: 'Failed to retrieve recordings' });
   }
+});
+
+// Endpoint to get all image frames
+app.get('/api/v1/stream/frames', async (req, res) => {
+  try {
+    const files = await fsp.readdir(dataDir);
+    const imageFrames = files
+      .filter(file => file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg'))
+      .map(file => {
+        const filePath = path.join(dataDir, file);
+        try {
+          const stats = fs.statSync(filePath);
+          return {
+            id: file,
+            name: file,
+            url: `/data/${file}`, // Relative URL for client
+            createdAt: stats.birthtime.toISOString(),
+            size: stats.size,
+            type: 'image',
+          };
+        } catch (statError) {
+          console.error(`Error getting stats for image file ${file}:`, statError);
+          return {
+            id: file,
+            name: file,
+            url: `/data/${file}`,
+            createdAt: new Date(0).toISOString(),
+            size: 0,
+            type: 'image',
+            error: 'Could not retrieve file stats'
+          };
+        }
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // Sort by newest first
+    res.json(imageFrames);
+  } catch (err) {
+    console.error("Error reading data directory for frames:", err);
+    res.status(500).json({ error: 'Failed to retrieve image frames' });
+  }
+});
+
+// GET /api/v1/devices - List all devices
+app.get('/api/v1/devices', (req, res) => {
+  // In a real app, you might want to update lastSeen or other dynamic properties here
+  res.json(devices);
+});
+
+// GET /api/v1/system/status - Get system status
+app.get('/api/v1/system/status', (req, res) => {
+  // Update dynamic properties
+  systemStatus.totalDevices = devices.length;
+  systemStatus.onlineDevices = devices.filter(d => d.status === "online" || d.status === "warning").length; // Consider warning as online for count
+  res.json(systemStatus);
+});
+
+// POST /api/v1/devices/:deviceId/command - Send a command to a device
+app.post('/api/v1/devices/:deviceId/command', (req, res) => {
+  const { deviceId } = req.params;
+  const { command, payload } = req.body; // e.g., command: "reboot", payload: { delay: 5 }
+
+  const device = devices.find(d => d.id === deviceId);
+
+  if (!device) {
+    return res.status(404).json({ message: "Device not found" });
+  }
+
+  console.log(`Received command '${command}' for device ${deviceId} with payload:`, payload);
+
+  // Simulate command processing
+  // In a real application, you would interact with the actual device here (e.g., via MQTT, HTTP, etc.)
+  // For now, we'll just log it and return a success response.
+
+  // Example: Update device status based on command
+  if (command === 'reboot') {
+    device.status = 'rebooting';
+    setTimeout(() => {
+      const d = devices.find(dev => dev.id === deviceId);
+      if (d) d.status = 'online'; // Simulate it coming back online
+      console.log(`Device ${deviceId} rebooted and is now online.`);
+    }, 5000); // Simulate 5 seconds to reboot
+  } else if (command === 'setActive') {
+    // device.isActive = payload.active; // Assuming a property like isActive
+    console.log(`Device ${deviceId} active state set to ${payload.active}`);
+  }
+
+
+  res.status(200).json({ message: `Command '${command}' sent to device ${deviceId} successfully.`, deviceStatus: device.status });
 });
 
 // Serve static files from the data directory

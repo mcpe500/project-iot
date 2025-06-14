@@ -15,6 +15,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { CONFIG } from '../config';
+import { useRouter } from 'expo-router'; // Import useRouter
 
 interface Recording {
   id: string;
@@ -22,7 +23,7 @@ interface Recording {
   frameCount: number;
   createdAt: string;
   size: number;
-  url: string; // Added url field
+  url: string;
 }
 
 export default function RecordingsScreen() {
@@ -30,6 +31,7 @@ export default function RecordingsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter(); // Initialize useRouter
 
   useEffect(() => {
     loadRecordings();
@@ -37,36 +39,28 @@ export default function RecordingsScreen() {
 
   const loadRecordings = async () => {
     try {
+      setLoading(true); // Ensure loading is true at the start of a load
       setError(null);
       const response = await axios.get(`${CONFIG.BACKEND_URL}/api/v1/stream/recordings`);
-      console.log({ msg: `Recordings response: ${JSON.stringify(response.data)}` });
 
       if (response.data && Array.isArray(response.data)) {
-        const transformedRecordings = response.data.map((item: any) => {
-          const timestampMatch = item.filename.match(/_(\d+)\.jpg$/);
-          const timestamp = timestampMatch ? parseInt(timestampMatch[1], 10) : Date.now();
-          return {
-            id: item.filename, // Use filename as id, should be unique
-            name: item.filename,
-            frameCount: 0, // Placeholder
-            createdAt: new Date(timestamp).toISOString(),
-            size: 0, // Placeholder for size, can be fetched if available
-            url: `${CONFIG.BACKEND_URL}${item.url}` // Construct full URL
-          };
-        });
-
-        // Sort recordings by creation date (newest first)
-        const sortedRecordings = transformedRecordings.sort((a: Recording, b: Recording) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setRecordings(sortedRecordings);
+        const fetchedRecordings = response.data.map((rec: any) => ({
+          id: String(rec.id || rec.name), // Ensure id is a string
+          name: rec.name,
+          frameCount: rec.frameCount || (rec.durationSeconds ? rec.durationSeconds * 10 : 0), // Estimate frameCount if not present
+          createdAt: rec.createdAt,
+          size: rec.size,
+          url: rec.url,
+        }));
+        setRecordings(fetchedRecordings);
       } else {
-        setRecordings([]); // Clear recordings if data is not as expected
-        setError('Failed to load recordings or data is in unexpected format.');
+        console.warn('Unexpected response data format:', response.data);
+        setRecordings([]); // Set to empty array on unexpected format
       }
     } catch (error) {
       console.error('Error loading recordings:', error);
       setError('Failed to connect to server. Please check your backend connection.');
+      setRecordings([]); // Clear recordings on error
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -110,37 +104,36 @@ export default function RecordingsScreen() {
     );
   };
 
+  const playVideoRecording = (recording: Recording) => {
+    if (!recording.url) {
+      Alert.alert("Error", "Video URL is missing, cannot play.");
+      return;
+    }
+    console.log(`Navigating to play video: ${recording.name}, URL: ${recording.url}`);
+    router.push({
+      pathname: "/recordings", // Path to recordings.tsx screen
+      params: { videoUrl: recording.url, videoName: recording.name, initialTab: 'videos' },
+    });
+  };
+
   const keyExtractor = (item: Recording) => item.id;
 
   const renderRecordingItem = ({ item }: { item: Recording }) => (
     <TouchableOpacity
       style={styles.recordingItem}
-      onPress={() => showRecordingDetails(item)}
+      onPress={() => playVideoRecording(item)} // Updated onPress
     >
-      <View style={styles.recordingIcon}>
-        <IconSymbol name="video.fill" size={24} color="#4CAF50" />
-      </View>
-
+      <IconSymbol name="play.rectangle.fill" size={28} color="#4CAF50" style={styles.recordingIcon} />
       <View style={styles.recordingInfo}>
-        <ThemedText style={styles.recordingName} numberOfLines={1}>
-          {item.name}
-        </ThemedText>
-        <ThemedText style={styles.recordingDetails}>
-          {formatDate(item.createdAt)}
-        </ThemedText>
-        <ThemedText style={styles.recordingMeta}>
-          {getDurationText(item.frameCount)} • {formatFileSize(item.size)}
-        </ThemedText>
+        <Text style={styles.recordingName} numberOfLines={1}>{item.name}</Text>
+        <Text style={styles.recordingDetails}>
+          {formatDate(item.createdAt)} • {formatFileSize(item.size)}
+        </Text>
+        <Text style={styles.recordingMeta}>
+          {getDurationText(item.frameCount)}
+        </Text>
       </View>
-
-      <View style={styles.recordingActions}>
-        <TouchableOpacity
-          style={styles.actionButton}
-          onPress={() => showRecordingDetails(item)}
-        >
-          <IconSymbol name="info.circle" size={20} color="#2196F3" />
-        </TouchableOpacity>
-      </View>
+      <IconSymbol name="chevron.right" size={18} color="#555" />
     </TouchableOpacity>
   );
 
@@ -180,56 +173,44 @@ export default function RecordingsScreen() {
     </View>
   );
 
-  if (loading) {
+  if (loading && recordings.length === 0) { // Show loader only if no items yet
     return (
-      <ThemedView style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#000" />
-        <View style={styles.header}>
-          <ThemedText type="title" style={styles.title}>Recordings</ThemedText>
-        </View>
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#4CAF50" />
-          <ThemedText style={styles.loadingText}>Loading recordings...</ThemedText>
-        </View>
-      </ThemedView>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4CAF50" />
+        <Text style={styles.loadingText}>Loading Recordings...</Text>
+      </View>
     );
   }
 
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
-
       <View style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Recordings</ThemedText>
-        <TouchableOpacity
-          style={styles.refreshIconButton}
-          onPress={() => {
-            setRefreshing(true);
-            loadRecordings();
-          }}
-        >
-          <IconSymbol name="arrow.clockwise" size={20} color="#4CAF50" />
+        <Text style={styles.title}>Saved Recordings</Text>
+        <TouchableOpacity onPress={onRefresh} style={styles.refreshIconButton} disabled={refreshing}>
+          {refreshing ? <ActivityIndicator size="small" color="#fff" /> : <IconSymbol name="arrow.clockwise" size={20} color="#fff" />}
         </TouchableOpacity>
       </View>
-
-      {error ? (
+      {error && !refreshing ? ( // Show error only if not also refreshing (to avoid flicker)
         renderErrorState()
       ) : (
         <FlatList
           data={recordings}
           renderItem={renderRecordingItem}
-          keyExtractor={keyExtractor} // Use the defined keyExtractor
+          keyExtractor={keyExtractor}
           style={styles.list}
-          contentContainerStyle={recordings.length === 0 ? styles.emptyList : undefined}
+          contentContainerStyle={recordings.length === 0 && !loading ? styles.emptyList : { paddingBottom: 20 }}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
               colors={['#4CAF50']}
               tintColor="#4CAF50"
+              title="Pull to refresh"
+              titleColor="#999"
             />
           }
-          ListEmptyComponent={renderEmptyState}
+          ListEmptyComponent={!loading ? renderEmptyState : null} // Show empty state only if not loading
           showsVerticalScrollIndicator={false}
         />
       )}
