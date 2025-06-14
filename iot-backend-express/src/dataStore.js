@@ -125,9 +125,36 @@ class DataStore {
   }
 
   // Device operations
+  updateDevice(deviceId, updates) {
+    const device = this.devices.get(deviceId);
+    if (device) {
+      Object.assign(device, updates, { lastSeen: Date.now() });
+      this.devices.set(deviceId, device);
+      return device;
+    }
+    return null;
+  }
+
   registerDevice(device) {
-    this.devices.set(device.id, device);
-    return device;
+    const existingDevice = this.devices.get(device.id);
+    if (existingDevice) {
+      const updatedDevice = {
+        ...existingDevice,
+        ...device,
+        lastSeen: Date.now()
+      };
+      this.devices.set(device.id, updatedDevice);
+      return updatedDevice;
+    } else {
+      const newDevice = {
+        ...device,
+        status: device.status || 'online',
+        lastSeen: Date.now(),
+        errors: 0
+      };
+      this.devices.set(device.id, newDevice);
+      return newDevice;
+    }
   }
 
   getDevice(deviceId) {
@@ -144,6 +171,17 @@ class DataStore {
       devicesTotal: this.devices.size,
       uptime: process.uptime(),
       timestamp: Date.now()
+    };
+  }
+
+  getDeviceStatusSummary() {
+    const devices = this.getAllDevices();
+    return {
+      total: devices.length,
+      online: devices.filter(d => d.status === 'online').length,
+      offline: devices.filter(d => d.status === 'offline').length,
+      warning: devices.filter(d => d.status === 'warning').length,
+      error: devices.filter(d => d.status === 'error').length
     };
   }
 

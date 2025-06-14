@@ -23,7 +23,7 @@ const fastify = Fastify({
 
 // Environment configuration
 const envConfig: EnvironmentConfig = {
-  PORT: parseInt(process.env.PORT || '9003', 10),
+  PORT: parseInt(process.env.PORT || '9004', 10),
   HOST: process.env.HOST || '0.0.0.0',
   NODE_ENV: process.env.NODE_ENV || 'development',
   JWT_SECRET: process.env.JWT_SECRET || 'dev-jwt-secret',
