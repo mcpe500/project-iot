@@ -282,9 +282,16 @@ function setupRoutes(app, dataStore, wss) {
     }
   });
 
-  // Get all recordings
+  // Get all recordings with consistent response format
   app.get('/api/v1/stream/recordings', async (req, res) => {
     try {
+      // Set cache headers to ensure fresh data
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
       const files = await fsp.readdir(recordingsDir);
       const videoRecordingsPromises = files
         .filter(file => file.toLowerCase().endsWith('.mp4'))
@@ -292,13 +299,11 @@ function setupRoutes(app, dataStore, wss) {
           const filePath = path.join(recordingsDir, file);
           try {
             const stats = await fsp.stat(filePath);
-
             let createdAt = stats.birthtime || stats.mtime;
             const match = file.match(/rec_(\d+)\.mp4/);
             if (match && match[1]) {
               createdAt = new Date(parseInt(match[1], 10));
             }
-
             return {
               id: file,
               name: file,
@@ -315,25 +320,62 @@ function setupRoutes(app, dataStore, wss) {
 
       const videoRecordings = (await Promise.all(videoRecordingsPromises))
         .filter(Boolean)
-        .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        
-      res.json(videoRecordings);
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      console.log(`Found ${videoRecordings.length} recordings.`);
+      console.log(`Found ${videoRecordings} recordings.`);
+      // Respond with the standardized object
+      res.json({ success: true, data: videoRecordings });
     } catch (err) {
       console.error("Error reading recordings directory:", err);
-      return res.status(500).json({ error: 'Failed to retrieve recordings' });
+      res.status(500).json({ success: false, error: 'Failed to retrieve recordings' });
     }
   });
 
-  // Get all image frames
+  // Delete a recording
+  app.delete('/api/v1/stream/recordings/:filename', async (req, res) => {
+    const { filename } = req.params;
+    
+    if (!filename || !filename.endsWith('.mp4')) {
+      return res.status(400).json({ success: false, error: 'Invalid filename provided' });
+    }
+
+    const filePath = path.join(recordingsDir, filename);
+
+    try {
+      // Check if file exists first
+      await fsp.access(filePath);
+      
+      // Delete the file
+      await fsp.unlink(filePath);
+      console.log(`Recording ${filename} deleted successfully`);
+      
+      res.json({ success: true, message: `Recording ${filename} deleted successfully` });
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return res.status(404).json({ success: false, error: 'Recording not found' });
+      }
+      console.error(`Error deleting recording ${filename}:`, err);
+      res.status(500).json({ success: false, error: 'Failed to delete recording' });
+    }
+  });
+
+  // Get all image frames with consistent response format
   app.get('/api/v1/stream/frames', async (req, res) => {
     try {
+      // Set cache headers to ensure fresh data
+      res.set({
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      });
+
       const files = await fsp.readdir(dataDir);
-      const imageFrames = files
+      const imageFramesPromises = files
         .filter(file => file.toLowerCase().endsWith('.jpg') || file.toLowerCase().endsWith('.jpeg'))
-        .map(file => {
+        .map(async file => {
           const filePath = path.join(dataDir, file);
           try {
-            const stats = fs.statSync(filePath);
+            const stats = await fsp.stat(filePath);
             return {
               id: file,
               name: file,
@@ -344,22 +386,19 @@ function setupRoutes(app, dataStore, wss) {
             };
           } catch (statError) {
             console.error(`Error getting stats for image file ${file}:`, statError);
-            return {
-              id: file,
-              name: file,
-              url: `/data/${file}`,
-              createdAt: new Date(0).toISOString(),
-              size: 0,
-              type: 'image',
-              error: 'Could not retrieve file stats'
-            };
+            return null;
           }
-        })
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      res.json(imageFrames);
+        });
+
+        const imageFrames = (await Promise.all(imageFramesPromises))
+            .filter(Boolean)
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+      // Respond with the standardized object
+      res.json({ success: true, data: imageFrames });
     } catch (err) {
       console.error("Error reading data directory for frames:", err);
-      res.status(500).json({ error: 'Failed to retrieve image frames' });
+      res.status(500).json({ success: false, error: 'Failed to retrieve image frames' });
     }
   });
 
@@ -442,6 +481,7 @@ function setupRoutes(app, dataStore, wss) {
   // Serve static files
   app.use('/data', express.static(dataDir));
   app.use('/recordings', express.static(recordingsDir));
+
 }
 
 module.exports = setupRoutes;

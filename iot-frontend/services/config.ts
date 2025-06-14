@@ -3,9 +3,9 @@
 
 export const ENV_CONFIG = {
   // Development environment (default)
-  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9004',
+  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9003',
   // Ensure WS_URL does NOT have a trailing slash here; it will be handled by getWebSocketUrl
-  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9004',
+  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9003',
   API_KEY: process.env.EXPO_PUBLIC_API_KEY || 'dev-api-key-change-in-production',
   
   // Network configuration
@@ -44,4 +44,16 @@ export const getHttpUrl = (endpoint: string) => {
   // Ensure the endpoint starts with a slash
   const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   return `${baseUrl}${normalizedEndpoint}`;
+};
+
+// Legacy CONFIG export for backward compatibility
+export const CONFIG = {
+  BACKEND_URL: ENV_CONFIG.BACKEND_URL,
+  WS_URL: ENV_CONFIG.WS_URL,
+  API_KEY: ENV_CONFIG.API_KEY,
+  REQUEST_TIMEOUT: ENV_CONFIG.REQUEST_TIMEOUT,
+  RECONNECT_DELAY: ENV_CONFIG.RECONNECT_DELAY,
+  MAX_RECONNECT_ATTEMPTS: ENV_CONFIG.MAX_RECONNECT_ATTEMPTS,
+  CAMERA_FPS: ENV_CONFIG.CAMERA_FPS,
+  BUFFER_DURATION_SECONDS: ENV_CONFIG.BUFFER_DURATION_SECONDS,
 };
