@@ -41,3 +41,8 @@ data/
 recordings/
 /recordings/
 /recordings
+
+
+permitted_faces/
+/permitted_faces/
+/permitted_faces

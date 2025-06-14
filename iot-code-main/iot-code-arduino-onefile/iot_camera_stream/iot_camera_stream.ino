@@ -10,8 +10,8 @@
 // ===========================
 // Configuration Section
 // ===========================
-const char* ssid = "wireless@STTS";
-const char* password = "";
+const char* ssid = "G123_976E_5G";
+const char* password = "WIFI_PASSWORD";
 const char* server_url = "http://SERVER_IP:9003/api/v1/stream/stream";
 const char* register_url = "http://SERVER_IP:9003/api/v1/devices/register";
 const char* heartbeat_url = "http://SERVER_IP:9003/api/v1/devices/heartbeat";
