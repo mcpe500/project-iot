@@ -43,8 +43,8 @@ export default function RecordingsScreen() {
       setError(null);
       const response = await axios.get(`${CONFIG.BACKEND_URL}/api/v1/stream/recordings`);
 
-      if (response.data && Array.isArray(response.data)) {
-        const fetchedRecordings = response.data.map((rec: any) => ({
+      if (response.data && Array.isArray(response.data.data)) {
+        const fetchedRecordings = response.data.data.map((rec: any) => ({
           id: String(rec.id || rec.name), // Ensure id is a string
           name: rec.name,
           frameCount: rec.frameCount || (rec.durationSeconds ? rec.durationSeconds * 10 : 0), // Estimate frameCount if not present
