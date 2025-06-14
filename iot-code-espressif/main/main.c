@@ -20,7 +20,7 @@
 #include "esp_pm.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
-#include "cJSON.h"
+#include "cjson/cJSON.h"  // Updated include path for ESP-IDF v5.3+
 
 static const char *TAG = "HD_CAMERA";
 
@@ -185,9 +185,10 @@ void camera_task(void *pvParameters) {
             continue;
         }
         memcpy(frame_buffer, fb->buf, fb->len);
+        size_t frame_len = fb->len;  // Store length before returning fb
         esp_camera_fb_return(fb);
 
-        frame_data_t frame = { .buffer = frame_buffer, .length = fb->len };
+        frame_data_t frame = { .buffer = frame_buffer, .length = frame_len };
         if (xQueueSend(frame_queue, &frame, 0) != pdTRUE) {
             heap_caps_free(frame_buffer); // Free if queue is full
         }
@@ -250,7 +251,6 @@ void send_generic_post(const char* url, const char* payload) {
     }
     esp_http_client_cleanup(client);
 }
-
 
 void utility_task(void *pvParameters) {
     // Register device once at the beginning
