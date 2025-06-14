@@ -5,8 +5,8 @@ import { SymbolWeight, SymbolViewProps } from 'expo-symbols';
 import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
-type IconMapping = Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>;
-type IconSymbolName = keyof typeof MAPPING;
+type IconMapping = Record<string, ComponentProps<typeof MaterialIcons>['name']>;
+type IconSymbolName = string;
 
 /**
  * Add your SF Symbols to Material Icons mappings here.
@@ -18,7 +18,37 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
-} as IconMapping;
+  'symbol': 'code',
+  'function': 'functions',
+  'video': 'videocam',
+  'image': 'image',
+  'loading': 'autorenew',
+  'solid': 'crop-square',
+  'filter': 'filter',
+  'contain': 'fullscreen-exit',
+  'text': 'text-fields',
+  'cancel': 'cancel',
+  'repeat': 'repeat',
+  'anchor': 'anchor',
+  'link': 'link',
+  'at': 'alternate-email',
+  'sort': 'sort',
+  'map': 'map',
+  'details': 'details',
+  'head': 'headset',
+  'lan-connect': 'lan',
+  'lan-disconnect': 'lan-disconnected',
+  'alert-circle-outline': 'error-outline',
+  'refresh': 'refresh',
+  'antenna': 'antenna',
+  'information-circle-outline': 'info-outline',
+  'videocam-off-outline': 'videocam-off',
+  'refresh-outline': 'refresh',
+  'sync-outline': 'sync',
+  'film-outline': 'movie',
+  'images-outline': 'collections',
+  'blank': 'crop-free'
+} as any as IconMapping;
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.

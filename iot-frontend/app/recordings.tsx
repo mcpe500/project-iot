@@ -1,24 +1,24 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
-  StyleSheet,
+  Text,
   FlatList,
   TouchableOpacity,
-  Text,
-  Alert,
-  RefreshControl,
+  StyleSheet,
   ActivityIndicator,
-  StatusBar,
+  RefreshControl,
+  Modal,
+  Alert,
   Dimensions,
-  Modal
+  StatusBar,
 } from 'react-native';
 import axios from 'axios';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
-import { IconSymbol } from '@/components/ui/IconSymbol';
-import { CONFIG } from './config';
-import { Video, ResizeMode, AVPlaybackStatus } from 'expo-av';
 import { useLocalSearchParams } from 'expo-router';
+import { VideoView, VideoPlayer, VideoPlayerStatus } from 'expo-video';
+import { ThemedView } from '@/components/ThemedView';
+import { ThemedText } from '@/components/ThemedText';
+import { IconSymbol } from '@/components/IconSymbol';
+import { CONFIG } from '@/app/config';
 
 // Interface for media items (videos or images)
 interface MediaItem {
@@ -44,9 +44,9 @@ export default function RecordingsScreen() {
 
   // State for video player modal
   const [isVideoPlayerVisible, setIsVideoPlayerVisible] = useState(false);
-  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
-  const [videoStatus, setVideoStatus] = useState<AVPlaybackStatus | null>(null);
-  const videoPlayerRef = useRef<Video>(null);
+  const [selectedVideoPlayer, setSelectedVideoPlayer] = useState<VideoPlayer | null>(null);
+  const [videoStatus, setVideoStatus] = useState<VideoPlayerStatus | null>(null);
+  const videoPlayerRef = useRef<any>(null);
 
   const params = useLocalSearchParams<{ videoUrl?: string; videoName?: string; initialTab?: ActiveTab }>();
 
@@ -62,7 +62,6 @@ export default function RecordingsScreen() {
 
     const { videoUrl: urlFromParams } = params;
     if (urlFromParams && activeTab === 'videos') {
-      const videoNameFromParams = params.videoName || 'Video';
       handlePlayVideo(urlFromParams);
     }
   }, [activeTab, params.videoUrl, params.videoName]);
@@ -90,11 +89,11 @@ export default function RecordingsScreen() {
       } else {
         throw new Error(`Unexpected response structure from ${endpoint}`);
       }
-      
+
       const transformedItems: MediaItem[] = rawItems.map((item: any) => {
         const apiUrl = CONFIG.BACKEND_URL;
-        
-        let originalFilename: string = item.name || item.id; // Prefer item.name, then item.id
+
+        let originalFilename: string = item.name || item.id;
         if (typeof originalFilename !== 'string' || originalFilename.trim() === '') {
           originalFilename = `unknown_${tabType}_${Date.now()}${tabType === 'frames' ? '.jpg' : '.mp4'}`;
           console.warn(`Item received without valid name/id. Using fallback filename: ${originalFilename}`, item);
@@ -111,16 +110,16 @@ export default function RecordingsScreen() {
             timestampMs = parseInt(match[1], 10);
           } else if (item.createdAt && typeof item.createdAt === 'string') {
             timestampMs = Date.parse(item.createdAt);
-          } else if (typeof item.createdAt === 'number') { // Handle if createdAt is already a timestamp
-            timestampMs = item.createdAt; 
+          } else if (typeof item.createdAt === 'number') {
+            timestampMs = item.createdAt;
           } else {
             timestampMs = Date.now();
           }
           if (isNaN(timestampMs)) timestampMs = Date.now();
           nameToDisplay = `Frame ${new Date(timestampMs).toLocaleString()}`;
-          frameCountVal = 1; // An image is considered 1 frame
-        } else { // videos
-          nameToDisplay = params.videoName && item.url === params.videoUrl ? params.videoName : originalFilename; 
+          frameCountVal = 1;
+        } else {
+          nameToDisplay = params.videoName && item.url === params.videoUrl ? params.videoName : originalFilename;
           if (item.createdAt && typeof item.createdAt === 'string') {
             timestampMs = Date.parse(item.createdAt);
           } else if (typeof item.createdAt === 'number') {
@@ -129,8 +128,7 @@ export default function RecordingsScreen() {
             timestampMs = Date.now();
           }
           if (isNaN(timestampMs)) timestampMs = Date.now();
-          
-          // Populate frameCount and durationText if backend provides them for videos
+
           if (typeof item.frameCount === 'number') {
             frameCountVal = item.frameCount;
           }
@@ -138,23 +136,23 @@ export default function RecordingsScreen() {
             const minutes = Math.floor(item.durationSeconds / 60);
             const seconds = Math.floor(item.durationSeconds % 60);
             durationTextVal = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-          } else if (typeof item.durationText === 'string') { // Or if backend sends durationText directly
+          } else if (typeof item.durationText === 'string') {
             durationTextVal = item.durationText;
           }
         }
-        
+
         const idStr = String(item.id || originalFilename);
         const createdAtStr = item.createdAt ? String(item.createdAt) : new Date(timestampMs).toISOString();
         const urlStr = item.url ? (item.url.startsWith('http') ? item.url : `${apiUrl}${item.url}`) : '';
         if (!item.url) {
-            console.warn(`Item '${originalFilename}' missing URL.`, item);
+          console.warn(`Item '${originalFilename}' missing URL.`, item);
         }
 
         const mediaItem: MediaItem = {
           id: idStr,
           name: nameToDisplay,
           url: urlStr,
-          type: tabType === 'videos' ? 'video' : 'image', // Assign literal type
+          type: tabType === 'videos' ? 'video' : 'image',
           createdAt: createdAtStr,
           size: typeof item.size === 'number' ? item.size : undefined,
           filename: originalFilename,
@@ -163,7 +161,7 @@ export default function RecordingsScreen() {
         };
         return mediaItem;
       }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      
+
       setMediaItems(transformedItems);
 
     } catch (err) {
@@ -189,7 +187,7 @@ export default function RecordingsScreen() {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     loadMedia(activeTab);
-  }, [activeTab]);
+  }, [activeTab, loadMedia]);
 
   const handleTabChange = (tab: ActiveTab) => {
     setActiveTab(tab);
@@ -201,7 +199,8 @@ export default function RecordingsScreen() {
       console.error("handlePlayVideo called with invalid URL:", url);
       return;
     }
-    setSelectedVideoUrl(url);
+    const player = new VideoPlayer(url);
+    setSelectedVideoPlayer(player);
     setIsVideoPlayerVisible(true);
   };
 
@@ -210,18 +209,18 @@ export default function RecordingsScreen() {
     return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes || bytes === 0) return '0 Bytes';
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const getDurationText = (frameCount: number, fps: number = 10) => {
-    if (frameCount === 0) return '0s (0 frames)';
+  const getDurationText = (frameCount?: number, fps: number = 10) => {
+    if (frameCount === undefined || frameCount === 0) return '0s (0 frames)';
     if (frameCount === 1) return '1 frame';
-    const seconds = Math.max(1, Math.round(frameCount / fps)); 
+    const seconds = Math.max(1, Math.round(frameCount / fps));
     return `${seconds}s (${frameCount} frames at ~${fps}fps)`;
   };
 
@@ -231,14 +230,14 @@ export default function RecordingsScreen() {
       `Name: ${item.name}\n` +
       `Type: ${item.type}\n` +
       `Created: ${formatDate(item.createdAt)}\n` +
-      (item.type === 'video' ? `Duration: ${item.durationText}\n` : '') +
+      (item.type === 'video' ? `Duration: ${item.durationText || getDurationText(item.frameCount)}\n` : '') +
       `Frames: ${item.frameCount || (item.type === 'image' ? 1 : 'N/A')}\n` +
-      `Size: ${formatFileSize(item.size || 0)}\n` +
+      `Size: ${formatFileSize(item.size)}\n` +
       `URL: ${item.url}`,
       [
-        (item.type === 'video' && item.url ? { 
-            text: 'Play Video', 
-            onPress: () => handlePlayVideo(item.url), style: 'default' 
+        (item.type === 'video' && item.url ? {
+          text: 'Play Video',
+          onPress: () => handlePlayVideo(item.url), style: 'default'
         } : null),
         { text: 'OK', style: 'cancel' }
       ].filter(Boolean) as any
@@ -257,13 +256,13 @@ export default function RecordingsScreen() {
       }}
     >
       <View style={styles.recordingIcon}>
-        <IconSymbol 
-          name={item.type === 'video' ? "video.fill" : "photo.fill"} 
-          size={24} 
-          color={item.type === 'video' ? "#4CAF50" : "#007AFF"} 
+        <IconSymbol
+          name={item.type === 'video' ? "video" : "image"}
+          size={24}
+          color={item.type === 'video' ? "#4CAF50" : "#007AFF"}
         />
       </View>
-      
+
       <View style={styles.recordingInfo}>
         <ThemedText style={styles.recordingName} numberOfLines={1}>
           {item.name}
@@ -272,7 +271,9 @@ export default function RecordingsScreen() {
           {formatDate(item.createdAt)}
         </ThemedText>
         <ThemedText style={styles.recordingMeta}>
-          {item.type === 'video' ? item.durationText : `Frame • ${formatFileSize(item.size || 0)}`}
+          {item.type === 'video'
+            ? (item.durationText || getDurationText(item.frameCount))
+            : `Frame • ${formatFileSize(item.size)}`}
         </ThemedText>
       </View>
 
@@ -281,7 +282,7 @@ export default function RecordingsScreen() {
           style={styles.actionButton}
           onPress={() => showMediaDetails(item)}
         >
-          <IconSymbol name="info.circle" size={20} color="#2196F3" />
+          <IconSymbol name="information-outline" size={20} color="#2196F3" />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -289,22 +290,22 @@ export default function RecordingsScreen() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <IconSymbol 
-        name={activeTab === 'videos' ? "video.slash" : "photo.on.rectangle.angled"} 
-        size={64} 
-        color="#666" 
+      <IconSymbol
+        name={activeTab === 'videos' ? "video-off" : "image-outline"}
+        size={64}
+        color="#666"
       />
       <ThemedText style={styles.emptyTitle}>
         {activeTab === 'videos' ? 'No Video Recordings Yet' : 'No Image Frames Found'}
       </ThemedText>
       <ThemedText style={styles.emptySubtitle}>
-        {activeTab === 'videos' 
+        {activeTab === 'videos'
           ? 'Video recordings will appear here after you save them from the live stream.'
           : 'Image frames from the live stream will appear here. Ensure the backend endpoint is active.'}
       </ThemedText>
       <TouchableOpacity
         style={styles.refreshButton}
-        onPress={() => loadMedia(activeTab)}
+        onPress={() => loadMedia(activeTab, true)}
       >
         <Text style={styles.refreshButtonText}>Refresh</Text>
       </TouchableOpacity>
@@ -313,16 +314,15 @@ export default function RecordingsScreen() {
 
   const renderErrorState = () => (
     <View style={styles.emptyContainer}>
-      <IconSymbol name="exclamationmark.triangle" size={64} color="#FF4444" />
+      <IconSymbol name="alert-circle-outline" size={64} color="#FF4444" />
       <ThemedText style={styles.emptyTitle}>Connection Error</ThemedText>
       <ThemedText style={styles.emptySubtitle}>
-        {error}
+        {error || "An unknown error occurred. Please try again."}
       </ThemedText>
       <TouchableOpacity
         style={styles.refreshButton}
         onPress={() => {
-          setLoading(true);
-          loadMedia(activeTab);
+          loadMedia(activeTab, true);
         }}
       >
         <Text style={styles.refreshButtonText}>Retry</Text>
@@ -335,11 +335,14 @@ export default function RecordingsScreen() {
       <ThemedView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#000" />
         <View style={styles.header}>
-          <ThemedText type="title" style={styles.title}>Recordings</ThemedText>
+          <ThemedText style={styles.title}>Recordings</ThemedText>
+          <TouchableOpacity style={styles.refreshIconButton} onPress={onRefresh} disabled={refreshing}>
+            <IconSymbol name="refresh" size={24} color="#fff" />
+          </TouchableOpacity>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#4CAF50" />
-          <ThemedText style={styles.loadingText}>Loading recordings...</ThemedText>
+          <ThemedText style={styles.loadingText}>Loading Media...</ThemedText>
         </View>
       </ThemedView>
     );
@@ -348,66 +351,47 @@ export default function RecordingsScreen() {
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
-      
-      {/* Video Player Modal */}
-      <Modal
-        animationType="slide"
-        transparent={false}
-        visible={isVideoPlayerVisible}
-        onRequestClose={() => {
-          setIsVideoPlayerVisible(false);
-          setSelectedVideoUrl(null);
-          if (videoPlayerRef.current) {
-            videoPlayerRef.current.unloadAsync();
-          }
-        }}
-      >
-        <View style={styles.videoModalContainer}>
-          {selectedVideoUrl && (
-            <Video
+
+      {selectedVideoPlayer && (
+        <Modal
+          animationType="slide"
+          transparent={false}
+          visible={isVideoPlayerVisible}
+          onRequestClose={() => {
+            selectedVideoPlayer?.pause();
+            setIsVideoPlayerVisible(false);
+            setSelectedVideoPlayer(null);
+            setVideoStatus(null);
+          }}
+          supportedOrientations={['portrait', 'landscape']}
+        >
+          <View style={styles.videoModalContainer}>
+            <VideoView
               ref={videoPlayerRef}
-              source={{ uri: selectedVideoUrl }}
-              rate={1.0}
-              volume={1.0}
-              isMuted={false}
-              resizeMode={ResizeMode.CONTAIN}
-              useNativeControls
               style={styles.videoPlayer}
-              onPlaybackStatusUpdate={status => setVideoStatus(() => status)}
-              onError={(errorMessage: string) => { // Corrected type to string
-                console.error('Video player error:', errorMessage);
-                Alert.alert("Video Error", `Could not play video: ${errorMessage}`);
-                setIsVideoPlayerVisible(false); // Close modal on error
-                setSelectedVideoUrl(null);
-              }}
+              player={selectedVideoPlayer}
+              allowsFullscreen
+              allowsPictureInPicture
             />
-          )}
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => {
-              setIsVideoPlayerVisible(false);
-              setSelectedVideoUrl(null);
-              if (videoPlayerRef.current) {
-                videoPlayerRef.current.unloadAsync();
-              }
-            }}
-          >
-            <Text style={styles.closeButtonText}>Close</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => {
+                selectedVideoPlayer?.pause();
+                setIsVideoPlayerVisible(false);
+                setSelectedVideoPlayer(null);
+                setVideoStatus(null);
+              }}
+            >
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
 
       <View style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Recordings</ThemedText>
-        <TouchableOpacity
-          style={styles.refreshIconButton}
-          onPress={() => {
-            setRefreshing(true);
-            loadMedia(activeTab);
-          }}
-          disabled={refreshing}
-        >
-          <IconSymbol name="arrow.clockwise" size={20} color="#4CAF50" />
+        <ThemedText style={styles.title}>Recordings</ThemedText>
+        <TouchableOpacity style={styles.refreshIconButton} onPress={onRefresh} disabled={refreshing}>
+          <IconSymbol name={refreshing ? "sync" : "refresh"} size={24} color="#fff" />
         </TouchableOpacity>
       </View>
 
@@ -416,18 +400,18 @@ export default function RecordingsScreen() {
           style={[styles.tabButton, activeTab === 'videos' && styles.activeTabButton]}
           onPress={() => handleTabChange('videos')}
         >
-          <IconSymbol name="play.rectangle.fill" size={16} color={activeTab === 'videos' ? "#fff" : "#4CAF50"} />
+          <IconSymbol name="film" size={18} color={activeTab === 'videos' ? '#fff' : '#ccc'} />
           <Text style={[styles.tabButtonText, activeTab === 'videos' && styles.activeTabButtonText]}>
-            Video Recordings
+            Videos
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabButton, activeTab === 'frames' && styles.activeTabButton]}
           onPress={() => handleTabChange('frames')}
         >
-          <IconSymbol name="photo.stack.fill" size={16} color={activeTab === 'frames' ? "#fff" : "#007AFF"} />
+          <IconSymbol name="image-multiple" size={18} color={activeTab === 'frames' ? '#fff' : '#ccc'} />
           <Text style={[styles.tabButtonText, activeTab === 'frames' && styles.activeTabButtonText]}>
-            Image Frames
+            Frames
           </Text>
         </TouchableOpacity>
       </View>
@@ -438,7 +422,7 @@ export default function RecordingsScreen() {
         <FlatList
           data={mediaItems}
           renderItem={renderMediaItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id + item.filename}
           style={styles.list}
           contentContainerStyle={mediaItems.length === 0 && !loading ? styles.emptyList : undefined}
           refreshControl={
@@ -449,11 +433,14 @@ export default function RecordingsScreen() {
               tintColor="#4CAF50"
             />
           }
-          ListEmptyComponent={!loading ? renderEmptyState : null}
+          ListEmptyComponent={!loading && !refreshing ? renderEmptyState : null}
           showsVerticalScrollIndicator={false}
         />
       )}
-      {refreshing && <ActivityIndicator style={styles.bottomLoader} size="small" color="#4CAF50" />}
+      
+      {refreshing && mediaItems.length > 0 && (
+        <ActivityIndicator style={styles.bottomLoader} size="small" color="#4CAF50" />
+      )}
     </ThemedView>
   );
 }
@@ -468,7 +455,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: StatusBar.currentHeight ? StatusBar.currentHeight + 10 : 50,
+    paddingTop: (StatusBar.currentHeight || 0) + 10,
     paddingBottom: 15,
     backgroundColor: '#1a1a1a',
   },
@@ -484,6 +471,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#000',
   },
   loadingText: {
     color: '#fff',
@@ -494,21 +482,31 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   emptyList: {
-    flex: 1,
+    flexGrow: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   recordingItem: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1a1a1a',
     marginHorizontal: 16,
-    marginVertical: 4,
+    marginVertical: 6,
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#333',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
   recordingIcon: {
-    marginRight: 12,
+    marginRight: 16,
+    padding: 8,
+    backgroundColor: '#2c2c2c',
+    borderRadius: 20,
   },
   recordingInfo: {
     flex: 1,
@@ -521,7 +519,7 @@ const styles = StyleSheet.create({
   },
   recordingDetails: {
     color: '#ccc',
-    fontSize: 14,
+    fontSize: 13,
     marginBottom: 2,
   },
   recordingMeta: {
@@ -534,12 +532,14 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     padding: 8,
+    marginLeft: 8,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 40,
+    marginTop: -50,
   },
   emptyTitle: {
     color: '#fff',
@@ -559,13 +559,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
     paddingHorizontal: 24,
     paddingVertical: 12,
-    borderRadius: 20,
-    marginTop: 20,
+    borderRadius: 25,
+    marginTop: 25,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   refreshButtonText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+    marginLeft: 8,
   },
   tabContainer: {
     flexDirection: 'row',
@@ -600,9 +603,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   bottomLoader: {
-    marginVertical: 10,
+    marginVertical: 20,
   },
-  // Styles for Video Player Modal
   videoModalContainer: {
     flex: 1,
     backgroundColor: '#000',
@@ -611,19 +613,19 @@ const styles = StyleSheet.create({
   },
   videoPlayer: {
     width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height * 0.8,
+    height: Dimensions.get('window').width * (9 / 16),
   },
   closeButton: {
     position: 'absolute',
-    top: StatusBar.currentHeight ? StatusBar.currentHeight + 20 : 60,
+    top: (StatusBar.currentHeight || 0) + 20,
     right: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    backgroundColor: 'rgba(30, 30, 30, 0.8)',
     paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingVertical: 10,
+    borderRadius: 25,
   },
   closeButtonText: {
-    color: '#000',
+    color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
   },
