@@ -23,13 +23,13 @@ const fastify = Fastify({
 
 // Environment configuration
 const envConfig: EnvironmentConfig = {
-  PORT: parseInt(process.env.PORT || '3000', 10),
+  PORT: parseInt(process.env.PORT || '9003', 10),
   HOST: process.env.HOST || '0.0.0.0',
   NODE_ENV: process.env.NODE_ENV || 'development',
-  JWT_SECRET: process.env.JWT_SECRET!,
-  API_KEY: process.env.API_KEY!,
-  CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3001',
-  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100', 10),
+  JWT_SECRET: process.env.JWT_SECRET || 'dev-jwt-secret',
+  API_KEY: process.env.API_KEY || 'dev-api-key',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
   RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
   ...(process.env.DATABASE_URL && { DATABASE_URL: process.env.DATABASE_URL })
 };

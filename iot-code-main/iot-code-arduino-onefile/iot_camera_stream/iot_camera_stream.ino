@@ -10,11 +10,11 @@
 // ===========================
 // Configuration Section
 // ===========================
-const char* ssid = "G123_967E";
-const char* password = "Ivan4321";
-const char* server_url = "http://203.175.11.145:9002/api/v1/stream/stream";
-const char* register_url = "http://203.175.11.145:9002/api/v1/devices/register";
-const char* heartbeat_url = "http://203.175.11.145:9002/api/v1/devices/heartbeat";
+const char* ssid = "wireless@STTS";
+const char* password = "";
+const char* server_url = "http://203.175.11.145:9003/api/v1/stream/stream";
+const char* register_url = "http://203.175.11.145:9003/api/v1/devices/register";
+const char* heartbeat_url = "http://203.175.11.145:9003/api/v1/devices/heartbeat";
 const char* api_key = "dev-api-key-change-in-production";
 const char* device_id = "ESP32-CAM-001";
 const char* device_name = "Camera #1";

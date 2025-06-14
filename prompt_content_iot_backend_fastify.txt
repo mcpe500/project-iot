@@ -1,0 +1,4689 @@
+# file: iot-backend/.env.example
+```text
+# Server Configuration
+PORT=3000
+HOST=0.0.0.0
+NODE_ENV=development
+
+# Security
+JWT_SECRET=your-jwt-secret-here
+API_KEY=your-api-key-here
+
+# CORS Configuration
+CORS_ORIGIN=http://localhost:3001,http://localhost:19006
+
+# Rate Limiting
+RATE_LIMIT_MAX=100
+RATE_LIMIT_WINDOW_MS=60000
+
+# Logging
+LOG_LEVEL=info
+
+# Database (Future use)
+DATABASE_URL=postgresql://localhost/iot_dashboard
+
+# SSH Reverse Tunnel Configuration (Optional)
+# Uncomment and configure these to enable reverse proxy tunneling
+# PUBLIC_VPS_IP=your.vps.ip.address
+# PUBLIC_PORT=9001
+# SSH_USER=your-ssh-username
+# SSH_PASSWORD=your-ssh-password
+# SSH_PRIVATE_KEY_PATH=~/.ssh/id_rsa
+# SSH_PASSPHRASE=your-key-passphrase
+
+# Gemini AI Configuration
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-1.5-pro-latest
+GEMINI_MAX_FILE_SIZE=50MB
+GEMINI_SUPPORTED_FORMATS=image/jpeg,image/png,image/gif,image/webp,video/mp4,video/mov,video/avi,audio/mp3,audio/wav,audio/aac
+
+```
+
+# file: iot-backend/.env.test
+```text
+# Test Environment Configuration
+PORT=3001
+HOST=127.0.0.1
+NODE_ENV=test
+JWT_SECRET=test-jwt-secret-for-integration-tests
+API_KEY=test-api-key
+CORS_ORIGIN=http://localhost:3001
+RATE_LIMIT_MAX=1000
+RATE_LIMIT_WINDOW_MS=60000
+LOG_LEVEL=silent
+
+# Optional test configurations
+# DATABASE_URL=sqlite://test.db
+# GEMINI_API_KEY=test-gemini-key
+
+```
+
+# file: iot-backend/.gitignore
+```text
+# dependencies (bun install)
+node_modules
+
+# output
+out
+dist
+*.tgz
+
+# code coverage
+coverage
+*.lcov
+
+# logs
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv environment variable files
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# IntelliJ based IDEs
+.idea
+
+# Finder (MacOS) folder config
+.DS_Store
+
+```
+
+# file: iot-backend/README.md
+```markdown
+# IoT Backend Service
+
+A production-grade, high-performance IoT backend service built with **Fastify**, **Bun**, and **TypeScript**. This service acts as the central communication hub for ESP32 devices and provides real-time data streaming to frontend dashboards.
+
+## 🚀 Features
+
+- **High Performance**: Built with Fastify and Bun for maximum throughput
+- **Real-time Communication**: WebSocket support for instant data updates
+- **Production Ready**: Comprehensive logging, error handling, and security
+- **Type Safe**: Full TypeScript implementation with strict type checking
+- **Modular Architecture**: Plugin-based system for easy extensibility
+- **API Documentation**: JSON Schema validation with automatic OpenAPI generation
+- **Security First**: Rate limiting, CORS, Helmet, and API key authentication
+- **Database Agnostic**: Clean abstraction layer for easy database integration
+
+## 🏗️ Architecture
+
+```
+src/
+├── types/          # TypeScript type definitions
+├── schemas/        # JSON Schema for request validation
+├── models/         # Data models and storage abstraction
+├── services/       # Business logic layer
+├── routes/         # API route handlers
+├── plugins/        # Fastify plugins (auth, websocket, etc.)
+├── utils/          # Helper functions and utilities
+└── server.ts       # Main application entry point
+```
+
+## 📋 Prerequisites
+
+- **Bun** >= 1.0.0
+- **Node.js** >= 18.0.0 (for compatibility)
+- **TypeScript** >= 5.0.0
+
+## 🔧 Installation
+
+1. **Clone and setup**:
+   ```bash
+   cd iot-backend
+   bun install
+   ```
+
+2. **Environment Configuration**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+3. **Start Development Server**:
+   ```bash
+   bun run dev
+   ```
+
+## 🌐 API Endpoints
+
+### Core Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Health check (public) |
+| `WS` | `/ws` | WebSocket connection for real-time updates |
+
+### Data Ingestion
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/ingest/sensor-data` | Submit sensor data from ESP32 |
+| `GET` | `/api/v1/ingest/sensor-data/history/:deviceId` | Get sensor history |
+
+### Dashboard API
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/dashboard/data` | Complete dashboard data |
+| `GET` | `/api/v1/dashboard/devices` | List all devices |
+| `GET` | `/api/v1/dashboard/system-status` | System statistics |
+
+### Device Control
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/control/command` | Send command to device |
+| `GET` | `/api/v1/control/commands/pending` | Get pending commands |
+| `PUT` | `/api/v1/control/commands/:id/status` | Update command status |
+
+### Notes Management
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/dashboard/notes` | Get all notes |
+| `POST` | `/api/v1/dashboard/notes` | Create new note |
+| `PUT` | `/api/v1/dashboard/notes/:id` | Update note |
+| `DELETE` | `/api/v1/dashboard/notes/:id` | Delete note |
+
+### Configuration
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/config/media` | Media configuration (public) |
+| `GET` | `/api/v1/config/system` | System capabilities |
+
+## 🔐 Authentication
+
+Most endpoints require an API key in the request headers:
+
+```bash
+curl -H "X-API-Key: your-api-key-here" \
+     -X GET http://localhost:3000/api/v1/dashboard/data
+```
+
+Public endpoints (no authentication required):
+- `/health`
+- `/api/v1/config/media`
+- WebSocket endpoint `/ws`
+
+## 📊 Data Models
+
+### Sensor Data
+```typescript
+{
+  deviceId: string;
+  timestamp: number;
+  temperature?: number;
+  humidity?: number;
+  pressure?: number;
+  lightLevel?: number;
+  motionDetected?: boolean;
+  airQuality?: number;
+}
+```
+
+### Command
+```typescript
+{
+  deviceId: string;
+  type: 'led_control' | 'sensor_config' | 'reboot' | 'ping' | 'relay_control';
+  payload: Record<string, any>;
+}
+```
+
+## 🔄 Real-time Updates
+
+The WebSocket endpoint (`/ws`) provides real-time updates for:
+
+- **New sensor data**: Broadcast immediately when received
+- **Device status changes**: Online/offline status updates
+- **Command results**: Command execution status updates
+- **System alerts**: Critical system notifications
+
+### WebSocket Message Format
+```typescript
+{
+  type: 'sensor-data' | 'device-status' | 'command-result' | 'system-alert';
+  payload: any;
+  timestamp: number;
+}
+```
+
+## 🚀 Deployment
+
+### Development
+```bash
+bun run dev        # Development with hot reload
+bun run watch      # Watch mode
+```
+
+### Production
+```bash
+bun run build      # Type check and compile
+bun run start      # Start production server
+```
+
+### Environment Variables
+
+Required:
+- `PORT` - Server port (default: 3000)
+- `HOST` - Server host (default: 0.0.0.0)
+- `JWT_SECRET` - JWT signing secret
+- `API_KEY` - API authentication key
+
+Optional:
+- `CORS_ORIGIN` - Allowed CORS origins
+- `RATE_LIMIT_MAX` - Rate limit per window
+- `RATE_LIMIT_WINDOW_MS` - Rate limit window
+- `LOG_LEVEL` - Logging level (info, debug, error)
+- `DATABASE_URL` - Database connection string
+
+## 🔌 ESP32 Integration
+
+### Sending Sensor Data
+```cpp
+// ESP32 Arduino code example
+void sendSensorData() {
+  HTTPClient http;
+  http.begin("http://your-server:3000/api/v1/ingest/sensor-data");
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", "your-api-key");
+  
+  String payload = "{";
+  payload += "\"deviceId\":\"" + deviceId + "\",";
+  payload += "\"timestamp\":" + String(millis()) + ",";
+  payload += "\"temperature\":" + String(temperature) + ",";
+  payload += "\"humidity\":" + String(humidity);
+  payload += "}";
+  
+  int httpResponseCode = http.POST(payload);
+  http.end();
+}
+```
+
+### Receiving Commands
+```cpp
+// Check for pending commands
+void checkCommands() {
+  HTTPClient http;
+  http.begin("http://your-server:3000/api/v1/control/commands/pending?deviceId=" + deviceId);
+  http.addHeader("X-API-Key", "your-api-key");
+  
+  int httpResponseCode = http.GET();
+  if (httpResponseCode == 200) {
+    String response = http.getString();
+    // Parse and execute commands
+  }
+  http.end();
+}
+```
+
+## 🗄️ Database Integration
+
+The current implementation uses an in-memory data store for development. To integrate with a production database:
+
+1. **Create a new data adapter** in `src/models/`
+2. **Implement the same interface** as `DataStore`
+3. **Replace the singleton** in `src/models/dataStore.ts`
+
+Recommended databases:
+- **PostgreSQL** - General-purpose with JSON support
+- **InfluxDB** - Time-series optimized for sensor data
+- **MongoDB** - Document-based for flexible schemas
+
+## 🧪 Testing
+
+```bash
+bun test              # Run tests
+bun run check-types   # Type checking only
+bun run lint          # Linting and type checks
+```
+
+## 📝 Contributing
+
+1. Follow TypeScript strict mode
+2. Use Fastify plugins for new features
+3. Add JSON schemas for API validation
+4. Include comprehensive error handling
+5. Update documentation for new endpoints
+
+## 📄 License
+
+MIT License - see LICENSE file for details.
+
+```
+
+# file: iot-backend/bun.lock
+```text
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "iot-backend",
+      "dependencies": {
+        "@fastify/cors": "^11.0.1",
+        "@fastify/env": "^5.0.2",
+        "@fastify/helmet": "^13.0.1",
+        "@fastify/multipart": "^9.0.3",
+        "@fastify/rate-limit": "^10.3.0",
+        "@fastify/websocket": "^11.1.0",
+        "@google/generative-ai": "^0.24.1",
+        "ajv": "^8.17.1",
+        "dotenv": "^16.5.0",
+        "fastify": "^5.3.3",
+        "fastify-plugin": "^5.0.1",
+        "multer": "^2.0.1",
+        "pino": "^9.7.0",
+        "ssh2": "^1.16.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/node": "^22.15.30",
+        "tsx": "^4.19.4",
+      },
+      "peerDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+  },
+  "packages": {
+    "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.25.5", "", { "os": "aix", "cpu": "ppc64" }, "sha512-9o3TMmpmftaCMepOdA5k/yDw8SfInyzWWTjYTFCX3kPSDJMROQTb8jg+h9Cnwnmm1vOzvxN7gIfB5V2ewpjtGA=="],
+
+    "@esbuild/android-arm": ["@esbuild/android-arm@0.25.5", "", { "os": "android", "cpu": "arm" }, "sha512-AdJKSPeEHgi7/ZhuIPtcQKr5RQdo6OO2IL87JkianiMYMPbCtot9fxPbrMiBADOWWm3T2si9stAiVsGbTQFkbA=="],
+
+    "@esbuild/android-arm64": ["@esbuild/android-arm64@0.25.5", "", { "os": "android", "cpu": "arm64" }, "sha512-VGzGhj4lJO+TVGV1v8ntCZWJktV7SGCs3Pn1GRWI1SBFtRALoomm8k5E9Pmwg3HOAal2VDc2F9+PM/rEY6oIDg=="],
+
+    "@esbuild/android-x64": ["@esbuild/android-x64@0.25.5", "", { "os": "android", "cpu": "x64" }, "sha512-D2GyJT1kjvO//drbRT3Hib9XPwQeWd9vZoBJn+bu/lVsOZ13cqNdDeqIF/xQ5/VmWvMduP6AmXvylO/PIc2isw=="],
+
+    "@esbuild/darwin-arm64": ["@esbuild/darwin-arm64@0.25.5", "", { "os": "darwin", "cpu": "arm64" }, "sha512-GtaBgammVvdF7aPIgH2jxMDdivezgFu6iKpmT+48+F8Hhg5J/sfnDieg0aeG/jfSvkYQU2/pceFPDKlqZzwnfQ=="],
+
+    "@esbuild/darwin-x64": ["@esbuild/darwin-x64@0.25.5", "", { "os": "darwin", "cpu": "x64" }, "sha512-1iT4FVL0dJ76/q1wd7XDsXrSW+oLoquptvh4CLR4kITDtqi2e/xwXwdCVH8hVHU43wgJdsq7Gxuzcs6Iq/7bxQ=="],
+
+    "@esbuild/freebsd-arm64": ["@esbuild/freebsd-arm64@0.25.5", "", { "os": "freebsd", "cpu": "arm64" }, "sha512-nk4tGP3JThz4La38Uy/gzyXtpkPW8zSAmoUhK9xKKXdBCzKODMc2adkB2+8om9BDYugz+uGV7sLmpTYzvmz6Sw=="],
+
+    "@esbuild/freebsd-x64": ["@esbuild/freebsd-x64@0.25.5", "", { "os": "freebsd", "cpu": "x64" }, "sha512-PrikaNjiXdR2laW6OIjlbeuCPrPaAl0IwPIaRv+SMV8CiM8i2LqVUHFC1+8eORgWyY7yhQY+2U2fA55mBzReaw=="],
+
+    "@esbuild/linux-arm": ["@esbuild/linux-arm@0.25.5", "", { "os": "linux", "cpu": "arm" }, "sha512-cPzojwW2okgh7ZlRpcBEtsX7WBuqbLrNXqLU89GxWbNt6uIg78ET82qifUy3W6OVww6ZWobWub5oqZOVtwolfw=="],
+
+    "@esbuild/linux-arm64": ["@esbuild/linux-arm64@0.25.5", "", { "os": "linux", "cpu": "arm64" }, "sha512-Z9kfb1v6ZlGbWj8EJk9T6czVEjjq2ntSYLY2cw6pAZl4oKtfgQuS4HOq41M/BcoLPzrUbNd+R4BXFyH//nHxVg=="],
+
+    "@esbuild/linux-ia32": ["@esbuild/linux-ia32@0.25.5", "", { "os": "linux", "cpu": "ia32" }, "sha512-sQ7l00M8bSv36GLV95BVAdhJ2QsIbCuCjh/uYrWiMQSUuV+LpXwIqhgJDcvMTj+VsQmqAHL2yYaasENvJ7CDKA=="],
+
+    "@esbuild/linux-loong64": ["@esbuild/linux-loong64@0.25.5", "", { "os": "linux", "cpu": "none" }, "sha512-0ur7ae16hDUC4OL5iEnDb0tZHDxYmuQyhKhsPBV8f99f6Z9KQM02g33f93rNH5A30agMS46u2HP6qTdEt6Q1kg=="],
+
+    "@esbuild/linux-mips64el": ["@esbuild/linux-mips64el@0.25.5", "", { "os": "linux", "cpu": "none" }, "sha512-kB/66P1OsHO5zLz0i6X0RxlQ+3cu0mkxS3TKFvkb5lin6uwZ/ttOkP3Z8lfR9mJOBk14ZwZ9182SIIWFGNmqmg=="],
+
+    "@esbuild/linux-ppc64": ["@esbuild/linux-ppc64@0.25.5", "", { "os": "linux", "cpu": "ppc64" }, "sha512-UZCmJ7r9X2fe2D6jBmkLBMQetXPXIsZjQJCjgwpVDz+YMcS6oFR27alkgGv3Oqkv07bxdvw7fyB71/olceJhkQ=="],
+
+    "@esbuild/linux-riscv64": ["@esbuild/linux-riscv64@0.25.5", "", { "os": "linux", "cpu": "none" }, "sha512-kTxwu4mLyeOlsVIFPfQo+fQJAV9mh24xL+y+Bm6ej067sYANjyEw1dNHmvoqxJUCMnkBdKpvOn0Ahql6+4VyeA=="],
+
+    "@esbuild/linux-s390x": ["@esbuild/linux-s390x@0.25.5", "", { "os": "linux", "cpu": "s390x" }, "sha512-K2dSKTKfmdh78uJ3NcWFiqyRrimfdinS5ErLSn3vluHNeHVnBAFWC8a4X5N+7FgVE1EjXS1QDZbpqZBjfrqMTQ=="],
+
+    "@esbuild/linux-x64": ["@esbuild/linux-x64@0.25.5", "", { "os": "linux", "cpu": "x64" }, "sha512-uhj8N2obKTE6pSZ+aMUbqq+1nXxNjZIIjCjGLfsWvVpy7gKCOL6rsY1MhRh9zLtUtAI7vpgLMK6DxjO8Qm9lJw=="],
+
+    "@esbuild/netbsd-arm64": ["@esbuild/netbsd-arm64@0.25.5", "", { "os": "none", "cpu": "arm64" }, "sha512-pwHtMP9viAy1oHPvgxtOv+OkduK5ugofNTVDilIzBLpoWAM16r7b/mxBvfpuQDpRQFMfuVr5aLcn4yveGvBZvw=="],
+
+    "@esbuild/netbsd-x64": ["@esbuild/netbsd-x64@0.25.5", "", { "os": "none", "cpu": "x64" }, "sha512-WOb5fKrvVTRMfWFNCroYWWklbnXH0Q5rZppjq0vQIdlsQKuw6mdSihwSo4RV/YdQ5UCKKvBy7/0ZZYLBZKIbwQ=="],
+
+    "@esbuild/openbsd-arm64": ["@esbuild/openbsd-arm64@0.25.5", "", { "os": "openbsd", "cpu": "arm64" }, "sha512-7A208+uQKgTxHd0G0uqZO8UjK2R0DDb4fDmERtARjSHWxqMTye4Erz4zZafx7Di9Cv+lNHYuncAkiGFySoD+Mw=="],
+
+    "@esbuild/openbsd-x64": ["@esbuild/openbsd-x64@0.25.5", "", { "os": "openbsd", "cpu": "x64" }, "sha512-G4hE405ErTWraiZ8UiSoesH8DaCsMm0Cay4fsFWOOUcz8b8rC6uCvnagr+gnioEjWn0wC+o1/TAHt+It+MpIMg=="],
+
+    "@esbuild/sunos-x64": ["@esbuild/sunos-x64@0.25.5", "", { "os": "sunos", "cpu": "x64" }, "sha512-l+azKShMy7FxzY0Rj4RCt5VD/q8mG/e+mDivgspo+yL8zW7qEwctQ6YqKX34DTEleFAvCIUviCFX1SDZRSyMQA=="],
+
+    "@esbuild/win32-arm64": ["@esbuild/win32-arm64@0.25.5", "", { "os": "win32", "cpu": "arm64" }, "sha512-O2S7SNZzdcFG7eFKgvwUEZ2VG9D/sn/eIiz8XRZ1Q/DO5a3s76Xv0mdBzVM5j5R639lXQmPmSo0iRpHqUUrsxw=="],
+
+    "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.25.5", "", { "os": "win32", "cpu": "ia32" }, "sha512-onOJ02pqs9h1iMJ1PQphR+VZv8qBMQ77Klcsqv9CNW2w6yLqoURLcgERAIurY6QE63bbLuqgP9ATqajFLK5AMQ=="],
+
+    "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.5", "", { "os": "win32", "cpu": "x64" }, "sha512-TXv6YnJ8ZMVdX+SXWVBo/0p8LTcrUYngpWjvm91TMjjBQii7Oz11Lw5lbDV5Y0TzuhSJHwiH4hEtC1I42mMS0g=="],
+
+    "@fastify/ajv-compiler": ["@fastify/ajv-compiler@4.0.2", "", { "dependencies": { "ajv": "^8.12.0", "ajv-formats": "^3.0.1", "fast-uri": "^3.0.0" } }, "sha512-Rkiu/8wIjpsf46Rr+Fitd3HRP+VsxUFDDeag0hs9L0ksfnwx2g7SPQQTFL0E8Qv+rfXzQOxBJnjUB9ITUDjfWQ=="],
+
+    "@fastify/busboy": ["@fastify/busboy@3.1.1", "", {}, "sha512-5DGmA8FTdB2XbDeEwc/5ZXBl6UbBAyBOOLlPuBnZ/N1SwdH9Ii+cOX3tBROlDgcTXxjOYnLMVoKk9+FXAw0CJw=="],
+
+    "@fastify/cors": ["@fastify/cors@11.0.1", "", { "dependencies": { "fastify-plugin": "^5.0.0", "toad-cache": "^3.7.0" } }, "sha512-dmZaE7M1f4SM8ZZuk5RhSsDJ+ezTgI7v3HHRj8Ow9CneczsPLZV6+2j2uwdaSLn8zhTv6QV0F4ZRcqdalGx1pQ=="],
+
+    "@fastify/deepmerge": ["@fastify/deepmerge@2.0.2", "", {}, "sha512-3wuLdX5iiiYeZWP6bQrjqhrcvBIf0NHbQH1Ur1WbHvoiuTYUEItgygea3zs8aHpiitn0lOB8gX20u1qO+FDm7Q=="],
+
+    "@fastify/env": ["@fastify/env@5.0.2", "", { "dependencies": { "env-schema": "^6.0.0", "fastify-plugin": "^5.0.0" } }, "sha512-4m/jHS3s/G/DBJVODob9sxGUei/Ij8JFbA2PYqBfoihTm+Qqae2xD9xhez68UFZu1d4SNJPIb6uAOwbNvRYw+A=="],
+
+    "@fastify/error": ["@fastify/error@4.2.0", "", {}, "sha512-RSo3sVDXfHskiBZKBPRgnQTtIqpi/7zhJOEmAxCiBcM7d0uwdGdxLlsCaLzGs8v8NnxIRlfG0N51p5yFaOentQ=="],
+
+    "@fastify/fast-json-stringify-compiler": ["@fastify/fast-json-stringify-compiler@5.0.3", "", { "dependencies": { "fast-json-stringify": "^6.0.0" } }, "sha512-uik7yYHkLr6fxd8hJSZ8c+xF4WafPK+XzneQDPU+D10r5X19GW8lJcom2YijX2+qtFF1ENJlHXKFM9ouXNJYgQ=="],
+
+    "@fastify/forwarded": ["@fastify/forwarded@3.0.0", "", {}, "sha512-kJExsp4JCms7ipzg7SJ3y8DwmePaELHxKYtg+tZow+k0znUTf3cb+npgyqm8+ATZOdmfgfydIebPDWM172wfyA=="],
+
+    "@fastify/helmet": ["@fastify/helmet@13.0.1", "", { "dependencies": { "fastify-plugin": "^5.0.0", "helmet": "^8.0.0" } }, "sha512-i+ifqazG3d0HwHL3zuZdg6B/WPc9Ee6kVfGpwGho4nxm0UaK1htss0zq+1rVhOoAorZlCgTZ3/i4S58hUGkkoA=="],
+
+    "@fastify/merge-json-schemas": ["@fastify/merge-json-schemas@0.2.1", "", { "dependencies": { "dequal": "^2.0.3" } }, "sha512-OA3KGBCy6KtIvLf8DINC5880o5iBlDX4SxzLQS8HorJAbqluzLRn80UXU0bxZn7UOFhFgpRJDasfwn9nG4FG4A=="],
+
+    "@fastify/multipart": ["@fastify/multipart@9.0.3", "", { "dependencies": { "@fastify/busboy": "^3.0.0", "@fastify/deepmerge": "^2.0.0", "@fastify/error": "^4.0.0", "fastify-plugin": "^5.0.0", "secure-json-parse": "^3.0.0" } }, "sha512-pJogxQCrT12/6I5Fh6jr3narwcymA0pv4B0jbC7c6Bl9wnrxomEUnV0d26w6gUls7gSXmhG8JGRMmHFIPsxt1g=="],
+
+    "@fastify/proxy-addr": ["@fastify/proxy-addr@5.0.0", "", { "dependencies": { "@fastify/forwarded": "^3.0.0", "ipaddr.js": "^2.1.0" } }, "sha512-37qVVA1qZ5sgH7KpHkkC4z9SK6StIsIcOmpjvMPXNb3vx2GQxhZocogVYbr2PbbeLCQxYIPDok307xEvRZOzGA=="],
+
+    "@fastify/rate-limit": ["@fastify/rate-limit@10.3.0", "", { "dependencies": { "@lukeed/ms": "^2.0.2", "fastify-plugin": "^5.0.0", "toad-cache": "^3.7.0" } }, "sha512-eIGkG9XKQs0nyynatApA3EVrojHOuq4l6fhB4eeCk4PIOeadvOJz9/4w3vGI44Go17uaXOWEcPkaD8kuKm7g6Q=="],
+
+    "@fastify/websocket": ["@fastify/websocket@11.1.0", "", { "dependencies": { "duplexify": "^4.1.3", "fastify-plugin": "^5.0.0", "ws": "^8.16.0" } }, "sha512-BH6yZjbA5+DjuC9lMgv3hHuaSsf3snph6df9l1zIW6lvZLnYVmxN7OgmGlMKftsTOFB7NePXVCJZPzagunQK5Q=="],
+
+    "@google/generative-ai": ["@google/generative-ai@0.24.1", "", {}, "sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q=="],
+
+    "@lukeed/ms": ["@lukeed/ms@2.0.2", "", {}, "sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA=="],
+
+    "@types/bun": ["@types/bun@1.2.15", "", { "dependencies": { "bun-types": "1.2.15" } }, "sha512-U1ljPdBEphF0nw1MIk0hI7kPg7dFdPyM7EenHsp6W5loNHl7zqy6JQf/RKCgnUn2KDzUpkBwHPnEJEjII594bA=="],
+
+    "@types/node": ["@types/node@22.15.30", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-6Q7lr06bEHdlfplU6YRbgG1SFBdlsfNC4/lX+SkhiTs0cpJkOElmWls8PxDFv4yY/xKb8Y6SO0OmSX4wgqTZbA=="],
+
+    "abstract-logging": ["abstract-logging@2.0.1", "", {}, "sha512-2BjRTZxTPvheOvGbBslFSYOUkr+SjPtOnrLP33f+VIWLzezQpZcqVg7ja3L4dBXmzzgwT+a029jRx5PCi3JuiA=="],
+
+    "ajv": ["ajv@8.17.1", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-B/gBuNg5SiMTrPkC+A2+cW0RszwxYmn6VYxB/inlBStS5nx6xHIt/ehKRhIMhqusl7a8LjQoZnjCs5vhwxOQ1g=="],
+
+    "ajv-formats": ["ajv-formats@3.0.1", "", { "dependencies": { "ajv": "^8.0.0" } }, "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ=="],
+
+    "append-field": ["append-field@1.0.0", "", {}, "sha512-klpgFSWLW1ZEs8svjfb7g4qWY0YS5imI82dTg+QahUvJ8YqAY0P10Uk8tTyh9ZGuYEZEMaeJYCF5BFuX552hsw=="],
+
+    "asn1": ["asn1@0.2.6", "", { "dependencies": { "safer-buffer": "~2.1.0" } }, "sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ=="],
+
+    "atomic-sleep": ["atomic-sleep@1.0.0", "", {}, "sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ=="],
+
+    "avvio": ["avvio@9.1.0", "", { "dependencies": { "@fastify/error": "^4.0.0", "fastq": "^1.17.1" } }, "sha512-fYASnYi600CsH/j9EQov7lECAniYiBFiiAtBNuZYLA2leLe9qOvZzqYHFjtIj6gD2VMoMLP14834LFWvr4IfDw=="],
+
+    "bcrypt-pbkdf": ["bcrypt-pbkdf@1.0.2", "", { "dependencies": { "tweetnacl": "^0.14.3" } }, "sha512-qeFIXtP4MSoi6NLqO12WfqARWWuCKi2Rn/9hJLEmtB5yTNr9DqFWkJRCf2qShWzPeAMRnOgCrq0sg/KLv5ES9w=="],
+
+    "buffer-from": ["buffer-from@1.1.2", "", {}, "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ=="],
+
+    "buildcheck": ["buildcheck@0.0.6", "", {}, "sha512-8f9ZJCUXyT1M35Jx7MkBgmBMo3oHTTBIPLiY9xyL0pl3T5RwcPEY8cUHr5LBNfu/fk6c2T4DJZuVM/8ZZT2D2A=="],
+
+    "bun-types": ["bun-types@1.2.15", "", { "dependencies": { "@types/node": "*" } }, "sha512-NarRIaS+iOaQU1JPfyKhZm4AsUOrwUOqRNHY0XxI8GI8jYxiLXLcdjYMG9UKS+fwWasc1uw1htV9AX24dD+p4w=="],
+
+    "busboy": ["busboy@1.6.0", "", { "dependencies": { "streamsearch": "^1.1.0" } }, "sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA=="],
+
+    "concat-stream": ["concat-stream@2.0.0", "", { "dependencies": { "buffer-from": "^1.0.0", "inherits": "^2.0.3", "readable-stream": "^3.0.2", "typedarray": "^0.0.6" } }, "sha512-MWufYdFw53ccGjCA+Ol7XJYpAlW6/prSMzuPOTRnJGcGzuhLn4Scrz7qf6o8bROZ514ltazcIFJZevcfbo0x7A=="],
+
+    "cookie": ["cookie@1.0.2", "", {}, "sha512-9Kr/j4O16ISv8zBBhJoi4bXOYNTkFLOqSL3UDB0njXxCXNezjeyVrJyGOWtgfs/q2km1gwBcfH8q1yEGoMYunA=="],
+
+    "cpu-features": ["cpu-features@0.0.10", "", { "dependencies": { "buildcheck": "~0.0.6", "nan": "^2.19.0" } }, "sha512-9IkYqtX3YHPCzoVg1Py+o9057a3i0fp7S530UWokCSaFVTc7CwXPRiOjRjBQQ18ZCNafx78YfnG+HALxtVmOGA=="],
+
+    "dequal": ["dequal@2.0.3", "", {}, "sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA=="],
+
+    "dotenv": ["dotenv@16.5.0", "", {}, "sha512-m/C+AwOAr9/W1UOIZUo232ejMNnJAJtYQjUbHoNTBNTJSvqzzDh7vnrei3o3r3m9blf6ZoDkvcw0VmozNRFJxg=="],
+
+    "dotenv-expand": ["dotenv-expand@10.0.0", "", {}, "sha512-GopVGCpVS1UKH75VKHGuQFqS1Gusej0z4FyQkPdwjil2gNIv+LNsqBlboOzpJFZKVT95GkCyWJbBSdFEFUWI2A=="],
+
+    "duplexify": ["duplexify@4.1.3", "", { "dependencies": { "end-of-stream": "^1.4.1", "inherits": "^2.0.3", "readable-stream": "^3.1.1", "stream-shift": "^1.0.2" } }, "sha512-M3BmBhwJRZsSx38lZyhE53Csddgzl5R7xGJNk7CVddZD6CcmwMCH8J+7AprIrQKH7TonKxaCjcv27Qmf+sQ+oA=="],
+
+    "end-of-stream": ["end-of-stream@1.4.4", "", { "dependencies": { "once": "^1.4.0" } }, "sha512-+uw1inIHVPQoaVuHzRyXd21icM+cnt4CzD5rW+NC1wjOUSTOs+Te7FOv7AhN7vS9x/oIyhLP5PR1H+phQAHu5Q=="],
+
+    "env-schema": ["env-schema@6.0.1", "", { "dependencies": { "ajv": "^8.12.0", "dotenv": "^16.4.5", "dotenv-expand": "10.0.0" } }, "sha512-WRD40Q25pP4NUbI3g3CNU5PPzcaiX7YYcPwiCZlfR4qGsKmTlckRixgHww0/fOXiXSNKA87pwshzq0ULTK/48A=="],
+
+    "esbuild": ["esbuild@0.25.5", "", { "optionalDependencies": { "@esbuild/aix-ppc64": "0.25.5", "@esbuild/android-arm": "0.25.5", "@esbuild/android-arm64": "0.25.5", "@esbuild/android-x64": "0.25.5", "@esbuild/darwin-arm64": "0.25.5", "@esbuild/darwin-x64": "0.25.5", "@esbuild/freebsd-arm64": "0.25.5", "@esbuild/freebsd-x64": "0.25.5", "@esbuild/linux-arm": "0.25.5", "@esbuild/linux-arm64": "0.25.5", "@esbuild/linux-ia32": "0.25.5", "@esbuild/linux-loong64": "0.25.5", "@esbuild/linux-mips64el": "0.25.5", "@esbuild/linux-ppc64": "0.25.5", "@esbuild/linux-riscv64": "0.25.5", "@esbuild/linux-s390x": "0.25.5", "@esbuild/linux-x64": "0.25.5", "@esbuild/netbsd-arm64": "0.25.5", "@esbuild/netbsd-x64": "0.25.5", "@esbuild/openbsd-arm64": "0.25.5", "@esbuild/openbsd-x64": "0.25.5", "@esbuild/sunos-x64": "0.25.5", "@esbuild/win32-arm64": "0.25.5", "@esbuild/win32-ia32": "0.25.5", "@esbuild/win32-x64": "0.25.5" }, "bin": { "esbuild": "bin/esbuild" } }, "sha512-P8OtKZRv/5J5hhz0cUAdu/cLuPIKXpQl1R9pZtvmHWQvrAUVd0UNIPT4IB4W3rNOqVO0rlqHmCIbSwxh/c9yUQ=="],
+
+    "fast-decode-uri-component": ["fast-decode-uri-component@1.0.1", "", {}, "sha512-WKgKWg5eUxvRZGwW8FvfbaH7AXSh2cL+3j5fMGzUMCxWBJ3dV3a7Wz8y2f/uQ0e3B6WmodD3oS54jTQ9HVTIIg=="],
+
+    "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
+
+    "fast-json-stringify": ["fast-json-stringify@6.0.1", "", { "dependencies": { "@fastify/merge-json-schemas": "^0.2.0", "ajv": "^8.12.0", "ajv-formats": "^3.0.1", "fast-uri": "^3.0.0", "json-schema-ref-resolver": "^2.0.0", "rfdc": "^1.2.0" } }, "sha512-s7SJE83QKBZwg54dIbD5rCtzOBVD43V1ReWXXYqBgwCwHLYAAT0RQc/FmrQglXqWPpz6omtryJQOau5jI4Nrvg=="],
+
+    "fast-querystring": ["fast-querystring@1.1.2", "", { "dependencies": { "fast-decode-uri-component": "^1.0.1" } }, "sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg=="],
+
+    "fast-redact": ["fast-redact@3.5.0", "", {}, "sha512-dwsoQlS7h9hMeYUq1W++23NDcBLV4KqONnITDV9DjfS3q1SgDGVrBdvvTLUotWtPSD7asWDV9/CmsZPy8Hf70A=="],
+
+    "fast-uri": ["fast-uri@3.0.6", "", {}, "sha512-Atfo14OibSv5wAp4VWNsFYE1AchQRTv9cBGWET4pZWHzYshFSS9NQI6I57rdKn9croWVMbYFbLhJ+yJvmZIIHw=="],
+
+    "fastify": ["fastify@5.3.3", "", { "dependencies": { "@fastify/ajv-compiler": "^4.0.0", "@fastify/error": "^4.0.0", "@fastify/fast-json-stringify-compiler": "^5.0.0", "@fastify/proxy-addr": "^5.0.0", "abstract-logging": "^2.0.1", "avvio": "^9.0.0", "fast-json-stringify": "^6.0.0", "find-my-way": "^9.0.0", "light-my-request": "^6.0.0", "pino": "^9.0.0", "process-warning": "^5.0.0", "rfdc": "^1.3.1", "secure-json-parse": "^4.0.0", "semver": "^7.6.0", "toad-cache": "^3.7.0" } }, "sha512-nCBiBCw9q6jPx+JJNVgO8JVnTXeUyrGcyTKPQikRkA/PanrFcOIo4R+ZnLeOLPZPGgzjomqfVarzE0kYx7qWiQ=="],
+
+    "fastify-plugin": ["fastify-plugin@5.0.1", "", {}, "sha512-HCxs+YnRaWzCl+cWRYFnHmeRFyR5GVnJTAaCJQiYzQSDwK9MgJdyAsuL3nh0EWRCYMgQ5MeziymvmAhUHYHDUQ=="],
+
+    "fastq": ["fastq@1.19.1", "", { "dependencies": { "reusify": "^1.0.4" } }, "sha512-GwLTyxkCXjXbxqIhTsMI2Nui8huMPtnxg7krajPJAjnEG/iiOS7i+zCtWGZR9G0NBKbXKh6X9m9UIsYX/N6vvQ=="],
+
+    "find-my-way": ["find-my-way@9.3.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-querystring": "^1.0.0", "safe-regex2": "^5.0.0" } }, "sha512-eRoFWQw+Yv2tuYlK2pjFS2jGXSxSppAs3hSQjfxVKxM5amECzIgYYc1FEI8ZmhSh/Ig+FrKEz43NLRKJjYCZVg=="],
+
+    "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
+
+    "get-tsconfig": ["get-tsconfig@4.10.1", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-auHyJ4AgMz7vgS8Hp3N6HXSmlMdUyhSUrfBF16w153rxtLIEOE+HGqaBppczZvnHLqQJfiHotCYpNhl0lUROFQ=="],
+
+    "helmet": ["helmet@8.1.0", "", {}, "sha512-jOiHyAZsmnr8LqoPGmCjYAaiuWwjAPLgY8ZX2XrmHawt99/u1y6RgrZMTeoPfpUbV96HOalYgz1qzkRbw54Pmg=="],
+
+    "inherits": ["inherits@2.0.4", "", {}, "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ=="],
+
+    "ipaddr.js": ["ipaddr.js@2.2.0", "", {}, "sha512-Ag3wB2o37wslZS19hZqorUnrnzSkpOVy+IiiDEiTqNubEYpYuHWIf6K4psgN2ZWKExS4xhVCrRVfb/wfW8fWJA=="],
+
+    "json-schema-ref-resolver": ["json-schema-ref-resolver@2.0.1", "", { "dependencies": { "dequal": "^2.0.3" } }, "sha512-HG0SIB9X4J8bwbxCbnd5FfPEbcXAJYTi1pBJeP/QPON+w8ovSME8iRG+ElHNxZNX2Qh6eYn1GdzJFS4cDFfx0Q=="],
+
+    "json-schema-traverse": ["json-schema-traverse@1.0.0", "", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
+
+    "light-my-request": ["light-my-request@6.6.0", "", { "dependencies": { "cookie": "^1.0.1", "process-warning": "^4.0.0", "set-cookie-parser": "^2.6.0" } }, "sha512-CHYbu8RtboSIoVsHZ6Ye4cj4Aw/yg2oAFimlF7mNvfDV192LR7nDiKtSIfCuLT7KokPSTn/9kfVLm5OGN0A28A=="],
+
+    "media-typer": ["media-typer@0.3.0", "", {}, "sha512-dq+qelQ9akHpcOl/gUVRTxVIOkAJ1wR3QAvb4RsVjS8oVoFjDGTc679wJYmUmknUF5HwMLOgb5O+a3KxfWapPQ=="],
+
+    "mime-db": ["mime-db@1.52.0", "", {}, "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg=="],
+
+    "mime-types": ["mime-types@2.1.35", "", { "dependencies": { "mime-db": "1.52.0" } }, "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw=="],
+
+    "minimist": ["minimist@1.2.8", "", {}, "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA=="],
+
+    "mkdirp": ["mkdirp@0.5.6", "", { "dependencies": { "minimist": "^1.2.6" }, "bin": { "mkdirp": "bin/cmd.js" } }, "sha512-FP+p8RB8OWpF3YZBCrP5gtADmtXApB5AMLn+vdyA+PyxCjrCs00mjyUozssO33cwDeT3wNGdLxJ5M//YqtHAJw=="],
+
+    "multer": ["multer@2.0.1", "", { "dependencies": { "append-field": "^1.0.0", "busboy": "^1.6.0", "concat-stream": "^2.0.0", "mkdirp": "^0.5.6", "object-assign": "^4.1.1", "type-is": "^1.6.18", "xtend": "^4.0.2" } }, "sha512-Ug8bXeTIUlxurg8xLTEskKShvcKDZALo1THEX5E41pYCD2sCVub5/kIRIGqWNoqV6szyLyQKV6mD4QUrWE5GCQ=="],
+
+    "nan": ["nan@2.22.2", "", {}, "sha512-DANghxFkS1plDdRsX0X9pm0Z6SJNN6gBdtXfanwoZ8hooC5gosGFSBGRYHUVPz1asKA/kMRqDRdHrluZ61SpBQ=="],
+
+    "object-assign": ["object-assign@4.1.1", "", {}, "sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg=="],
+
+    "on-exit-leak-free": ["on-exit-leak-free@2.1.2", "", {}, "sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA=="],
+
+    "once": ["once@1.4.0", "", { "dependencies": { "wrappy": "1" } }, "sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w=="],
+
+    "pino": ["pino@9.7.0", "", { "dependencies": { "atomic-sleep": "^1.0.0", "fast-redact": "^3.1.1", "on-exit-leak-free": "^2.1.0", "pino-abstract-transport": "^2.0.0", "pino-std-serializers": "^7.0.0", "process-warning": "^5.0.0", "quick-format-unescaped": "^4.0.3", "real-require": "^0.2.0", "safe-stable-stringify": "^2.3.1", "sonic-boom": "^4.0.1", "thread-stream": "^3.0.0" }, "bin": { "pino": "bin.js" } }, "sha512-vnMCM6xZTb1WDmLvtG2lE/2p+t9hDEIvTWJsu6FejkE62vB7gDhvzrpFR4Cw2to+9JNQxVnkAKVPA1KPB98vWg=="],
+
+    "pino-abstract-transport": ["pino-abstract-transport@2.0.0", "", { "dependencies": { "split2": "^4.0.0" } }, "sha512-F63x5tizV6WCh4R6RHyi2Ml+M70DNRXt/+HANowMflpgGFMAym/VKm6G7ZOQRjqN7XbGxK1Lg9t6ZrtzOaivMw=="],
+
+    "pino-std-serializers": ["pino-std-serializers@7.0.0", "", {}, "sha512-e906FRY0+tV27iq4juKzSYPbUj2do2X2JX4EzSca1631EB2QJQUqGbDuERal7LCtOpxl6x3+nvo9NPZcmjkiFA=="],
+
+    "process-warning": ["process-warning@5.0.0", "", {}, "sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA=="],
+
+    "quick-format-unescaped": ["quick-format-unescaped@4.0.4", "", {}, "sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg=="],
+
+    "readable-stream": ["readable-stream@3.6.2", "", { "dependencies": { "inherits": "^2.0.3", "string_decoder": "^1.1.1", "util-deprecate": "^1.0.1" } }, "sha512-9u/sniCrY3D5WdsERHzHE4G2YCXqoG5FTHUiCC4SIbr6XcLZBY05ya9EKjYek9O5xOAwjGq+1JdGBAS7Q9ScoA=="],
+
+    "real-require": ["real-require@0.2.0", "", {}, "sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg=="],
+
+    "require-from-string": ["require-from-string@2.0.2", "", {}, "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw=="],
+
+    "resolve-pkg-maps": ["resolve-pkg-maps@1.0.0", "", {}, "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw=="],
+
+    "ret": ["ret@0.5.0", "", {}, "sha512-I1XxrZSQ+oErkRR4jYbAyEEu2I0avBvvMM5JN+6EBprOGRCs63ENqZ3vjavq8fBw2+62G5LF5XelKwuJpcvcxw=="],
+
+    "reusify": ["reusify@1.1.0", "", {}, "sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw=="],
+
+    "rfdc": ["rfdc@1.4.1", "", {}, "sha512-q1b3N5QkRUWUl7iyylaaj3kOpIT0N2i9MqIEQXP73GVsN9cw3fdx8X63cEmWhJGi2PPCF23Ijp7ktmd39rawIA=="],
+
+    "safe-buffer": ["safe-buffer@5.2.1", "", {}, "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ=="],
+
+    "safe-regex2": ["safe-regex2@5.0.0", "", { "dependencies": { "ret": "~0.5.0" } }, "sha512-YwJwe5a51WlK7KbOJREPdjNrpViQBI3p4T50lfwPuDhZnE3XGVTlGvi+aolc5+RvxDD6bnUmjVsU9n1eboLUYw=="],
+
+    "safe-stable-stringify": ["safe-stable-stringify@2.5.0", "", {}, "sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA=="],
+
+    "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
+
+    "secure-json-parse": ["secure-json-parse@3.0.2", "", {}, "sha512-H6nS2o8bWfpFEV6U38sOSjS7bTbdgbCGU9wEM6W14P5H0QOsz94KCusifV44GpHDTu2nqZbuDNhTzu+mjDSw1w=="],
+
+    "semver": ["semver@7.7.2", "", { "bin": { "semver": "bin/semver.js" } }, "sha512-RF0Fw+rO5AMf9MAyaRXI4AV0Ulj5lMHqVxxdSgiVbixSCXoEmmX/jk0CuJw4+3SqroYO9VoUh+HcuJivvtJemA=="],
+
+    "set-cookie-parser": ["set-cookie-parser@2.7.1", "", {}, "sha512-IOc8uWeOZgnb3ptbCURJWNjWUPcO3ZnTTdzsurqERrP6nPyv+paC55vJM0LpOlT2ne+Ix+9+CRG1MNLlyZ4GjQ=="],
+
+    "sonic-boom": ["sonic-boom@4.2.0", "", { "dependencies": { "atomic-sleep": "^1.0.0" } }, "sha512-INb7TM37/mAcsGmc9hyyI6+QR3rR1zVRu36B0NeGXKnOOLiZOfER5SA+N7X7k3yUYRzLWafduTDvJAfDswwEww=="],
+
+    "split2": ["split2@4.2.0", "", {}, "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="],
+
+    "ssh2": ["ssh2@1.16.0", "", { "dependencies": { "asn1": "^0.2.6", "bcrypt-pbkdf": "^1.0.2" }, "optionalDependencies": { "cpu-features": "~0.0.10", "nan": "^2.20.0" } }, "sha512-r1X4KsBGedJqo7h8F5c4Ybpcr5RjyP+aWIG007uBPRjmdQWfEiVLzSK71Zji1B9sKxwaCvD8y8cwSkYrlLiRRg=="],
+
+    "stream-shift": ["stream-shift@1.0.3", "", {}, "sha512-76ORR0DO1o1hlKwTbi/DM3EXWGf3ZJYO8cXX5RJwnul2DEg2oyoZyjLNoQM8WsvZiFKCRfC1O0J7iCvie3RZmQ=="],
+
+    "streamsearch": ["streamsearch@1.1.0", "", {}, "sha512-Mcc5wHehp9aXz1ax6bZUyY5afg9u2rv5cqQI3mRrYkGC8rW2hM02jWuwjtL++LS5qinSyhj2QfLyNsuc+VsExg=="],
+
+    "string_decoder": ["string_decoder@1.3.0", "", { "dependencies": { "safe-buffer": "~5.2.0" } }, "sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA=="],
+
+    "thread-stream": ["thread-stream@3.1.0", "", { "dependencies": { "real-require": "^0.2.0" } }, "sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A=="],
+
+    "toad-cache": ["toad-cache@3.7.0", "", {}, "sha512-/m8M+2BJUpoJdgAHoG+baCwBT+tf2VraSfkBgl0Y00qIWt41DJ8R5B8nsEw0I58YwF5IZH6z24/2TobDKnqSWw=="],
+
+    "tsx": ["tsx@4.19.4", "", { "dependencies": { "esbuild": "~0.25.0", "get-tsconfig": "^4.7.5" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "bin": { "tsx": "dist/cli.mjs" } }, "sha512-gK5GVzDkJK1SI1zwHf32Mqxf2tSJkNx+eYcNly5+nHvWqXUJYUkWBQtKauoESz3ymezAI++ZwT855x5p5eop+Q=="],
+
+    "tweetnacl": ["tweetnacl@0.14.5", "", {}, "sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA=="],
+
+    "type-is": ["type-is@1.6.18", "", { "dependencies": { "media-typer": "0.3.0", "mime-types": "~2.1.24" } }, "sha512-TkRKr9sUTxEH8MdfuCSP7VizJyzRNMjj2J2do2Jr3Kym598JVdEksuzPQCnlFPW4ky9Q+iA+ma9BGm06XQBy8g=="],
+
+    "typedarray": ["typedarray@0.0.6", "", {}, "sha512-/aCDEGatGvZ2BIk+HmLf4ifCJFwvKFNb9/JeZPMulfgFracn9QFcAf5GO8B/mweUjSoblS5In0cWhqpfs/5PQA=="],
+
+    "typescript": ["typescript@5.8.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ=="],
+
+    "undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
+
+    "util-deprecate": ["util-deprecate@1.0.2", "", {}, "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="],
+
+    "wrappy": ["wrappy@1.0.2", "", {}, "sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ=="],
+
+    "ws": ["ws@8.18.2", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-DMricUmwGZUVr++AEAe2uiVM7UoO9MAVZMDu05UQOaUII0lp+zOzLLU4Xqh/JvTqklB1T4uELaaPBKyjE1r4fQ=="],
+
+    "xtend": ["xtend@4.0.2", "", {}, "sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ=="],
+
+    "fastify/secure-json-parse": ["secure-json-parse@4.0.0", "", {}, "sha512-dxtLJO6sc35jWidmLxo7ij+Eg48PM/kleBsxpC8QJE0qJICe+KawkDQmvCMZUr9u7WKVHgMW6vy3fQ7zMiFZMA=="],
+
+    "light-my-request/process-warning": ["process-warning@4.0.1", "", {}, "sha512-3c2LzQ3rY9d0hc1emcsHhfT9Jwz0cChib/QN89oME2R451w5fy3f0afAhERFZAwrbDU43wk12d0ORBpDVME50Q=="],
+  }
+}
+
+```
+
+# file: iot-backend/index.ts
+```typescript
+// Entry point for the IoT Backend service
+// This file imports and starts the main server
+import './src/server';
+```
+
+# file: iot-backend/package.json
+```json
+{
+  "name": "iot-backend",
+  "version": "1.0.0",
+  "description": "Production-grade IoT backend service using Fastify and Bun",
+  "main": "dist/server.js",
+  "module": "src/server.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "start": "bun run src/server.ts",
+    "build": "tsc",
+    "test": "bun test",
+    "lint": "bun run check-types && echo 'Linting complete'",
+    "check-types": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "watch": "bun run --watch src/server.ts"
+  },
+  "keywords": ["iot", "fastify", "bun", "websocket", "esp32", "sensors"],
+  "author": "IoT Developer",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.15.30",
+    "tsx": "^4.19.4"
+  },
+  "peerDependencies": {
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.1",
+    "@fastify/env": "^5.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/rate-limit": "^10.3.0",
+    "@fastify/websocket": "^11.1.0",
+    "@google/generative-ai": "^0.24.1",
+    "ajv": "^8.17.1",
+    "dotenv": "^16.5.0",
+    "fastify": "^5.3.3",
+    "fastify-plugin": "^5.0.1",
+    "multer": "^2.0.1",
+    "pino": "^9.7.0",
+    "ssh2": "^1.16.0"
+  }
+}
+
+```
+
+# file: iot-backend/src/job/tunnel.ts
+```typescript
+import { Client, ClientChannel, ConnectConfig } from 'ssh2';
+import * as fs from 'fs';
+import * as net from 'net';
+import * as path from 'path';
+import * as os from 'os';
+import * as dotenv from 'dotenv';
+import { EventEmitter } from 'events';
+
+// Load environment variables from .env file
+dotenv.config();
+
+// Extend SSH2.Client to include missing events
+declare module 'ssh2' {
+    interface Client {
+        on(event: 'ready', listener: () => void): this;
+        on(event: 'tcp connection', listener: (info: any, accept: () => ClientChannel, reject: () => void) => void): this;
+        on(event: 'error', listener: (err: Error) => void): this;
+        on(event: 'close', listener: (hadError: boolean) => void): this;
+        on(event: 'end', listener: () => void): this;
+    }
+}
+
+/**
+ * Resolves paths like ~/.ssh/id_rsa to absolute paths.
+ * @param inputPath Path potentially starting with ~
+ * @returns Absolute path
+ */
+function resolvePath(inputPath: string): string {
+    if (!inputPath || typeof inputPath !== 'string') {
+        return inputPath;
+    }
+    if (inputPath.startsWith('~' + path.sep)) {
+        return path.join(os.homedir(), inputPath.slice(1));
+    }
+    return path.resolve(inputPath);
+}
+
+/**
+ * Creates and maintains an SSH reverse tunnel using the ssh2 library.
+ * @param privateServerPort - Port where your local server is running (default: from env or 3000)
+ * @param publicPort - Port on the public VPS to listen on (default: from env or 9001)
+ * @param sshUser - SSH user for the public VPS (default: from env or 'user')
+ * @param publicVpsIp - IP address of the public VPS (required, from env)
+ * @param sshPassword - SSH password (optional, from env)
+ * @param privateKeyPath - Path to the SSH private key (optional, from env)
+ * @param passphrase - Passphrase for the private key (optional, from env)
+ * @returns The ssh2 Client instance if successful, otherwise null.
+ */
+export function createSshTunnel(
+    privateServerPort: number = parseInt(process.env.PRIVATE_SERVER_PORT || '3000', 10),
+    publicPort: number = parseInt(process.env.PUBLIC_PORT || '9001', 10),
+    sshUser: string = process.env.SSH_USER || 'user',
+    publicVpsIp: string | undefined = process.env.PUBLIC_VPS_IP,
+    sshPassword: string | undefined = process.env.SSH_PASSWORD,
+    privateKeyPath: string | undefined = process.env.SSH_PRIVATE_KEY_PATH,
+    passphrase: string | undefined = process.env.SSH_PASSPHRASE
+): Client | null {
+
+    if (!publicVpsIp) {
+        console.error('[Error] PUBLIC_VPS_IP is not defined in environment variables or passed as argument.');
+        return null;
+    }
+
+    const resolvedKeyPath = privateKeyPath ? resolvePath(privateKeyPath) : undefined;
+
+    // --- Authentication Configuration ---
+    const authConfig: ConnectConfig = {
+        host: publicVpsIp,
+        port: 22, // Default SSH port
+        username: sshUser,
+        readyTimeout: 20000, // Increase timeout for potentially slower connections
+        keepaliveInterval: 15000, // Send keepalive every 15 seconds
+        keepaliveCountMax: 5, // Disconnect after 5 missed keepalives
+    };
+
+    if (resolvedKeyPath) {
+        try {
+            console.log(`[Info] Attempting SSH connection using key: ${resolvedKeyPath}`);
+            authConfig.privateKey = fs.readFileSync(resolvedKeyPath);
+            if (passphrase) {
+                authConfig.passphrase = passphrase;
+            }
+        } catch (err: any) {
+            console.error(`[Error] Failed to read private key file "${resolvedKeyPath}": ${err.message}`);
+            // Optionally fall back to password or just fail
+            if (!sshPassword) {
+                console.error('[Error] No password provided as fallback.');
+                return null;
+            }
+            console.warn('[Warn] Falling back to password authentication.');
+            authConfig.password = sshPassword;
+        }
+    } else if (sshPassword) {
+        console.log(`[Info] Attempting SSH connection using password for user ${sshUser}`);
+        authConfig.password = sshPassword;
+    } else {
+        console.error('[Error] No SSH password or private key path provided.');
+        return null;
+    }
+
+    // --- SSH Client Setup ---
+    const conn = new Client();
+    let retryTimeout: NodeJS.Timeout | null = null;
+
+    const connect = () => {
+        if (retryTimeout) clearTimeout(retryTimeout);
+        console.log(`[Info] Connecting to ${sshUser}@${publicVpsIp}...`);
+        conn.connect(authConfig);
+    };
+
+    conn.on('ready', () => {
+        console.log('[Success] SSH connection established.');
+
+        // --- Setup Reverse Tunnel (Remote Forwarding -R) ---
+        // Ask the remote server to listen on publicPort
+        conn.forwardIn('0.0.0.0', publicPort, (err: Error | undefined, remotePort: number) => {
+            if (err) {
+                console.error(`[Error] Failed to start remote listener on port ${publicPort}:`, err);
+                conn.end(); // Close connection if forwarding fails
+                return;
+            }
+            console.log(`[Success] Remote server listening on port ${remotePort} (requested ${publicPort})`);
+
+            // --- Handle Incoming Connections from the Tunnel ---
+            conn.on('tcp connection', (info: any, accept: () => ClientChannel, reject: () => void) => {
+                console.log(`[Info] Incoming tunnel connection from ${info.srcIP}:${info.srcPort} to ${info.destIP}:${info.destPort}`);
+
+                const sshStream = accept(); // Accept the connection from the remote side
+
+                // Connect to the local private server
+                console.log(`[Info] Attempting to connect to local service at localhost:${privateServerPort}...`);
+
+                const localSocket = net.connect(privateServerPort, 'localhost', () => {
+                    console.log(`[Success] Connected to local service on port ${privateServerPort}`);
+                    // Bridge the connections: Pipe data back and forth
+                    sshStream.pipe(localSocket).pipe(sshStream);
+                    console.log(`[Info] Data pipe established between remote client and local service`);
+                });
+
+                localSocket.on('error', (socketErr: Error) => {
+                    console.error(`[Error] Local socket connection error (port ${privateServerPort}):`, socketErr.message);
+                    try {
+                        reject(); // Reject the SSH forwarded connection
+                    } catch (rejectErr: any) {
+                        console.error('[Error] Failed to reject SSH connection:', rejectErr.message);
+                    }
+                });
+
+                sshStream.on('close', () => {
+                    // console.log('[Info] SSH stream closed, closing local socket.');
+                    localSocket.end();
+                });
+
+                localSocket.on('close', (hadError) => {
+                    // console.log(`[Info] Local socket closed (hadError: ${hadError}), closing SSH stream.`);
+                    sshStream.end();
+                });
+
+                sshStream.on('error', (streamErr: Error) => {
+                    console.error('[Error] SSH stream error:', streamErr.message);
+                    localSocket.end(); // Ensure local socket is closed on stream error
+                });
+            });
+        });
+    });
+
+    conn.on('error', (err: Error) => {
+        console.error(`[Error] SSH connection error: ${err.message}`);
+        // Optional: Implement retry logic here
+        console.log('[Info] Attempting to reconnect in 10 seconds...');
+        retryTimeout = setTimeout(connect, 10000); // Retry after 10 seconds
+    });
+
+    conn.on('close', (hadError: boolean) => {
+        console.log(`[Info] SSH connection closed${hadError ? ' due to an error' : ''}.`);
+        // Optional: Implement retry logic or cleanup
+        if (!hadError) {
+            // If closed intentionally or without error, maybe retry
+            console.log('[Info] Attempting to reconnect in 10 seconds...');
+            retryTimeout = setTimeout(connect, 10000); // Retry after 10 seconds
+        }
+        // If hadError, the 'error' event likely already triggered the retry
+    });
+
+    // Initial connection attempt
+    connect();
+
+    return conn; // Return the client instance
+}
+
+// --- Example Usage ---
+// If executing this file directly (e.g., `ts-node ssh-tunnel.ts` or `node dist/ssh-tunnel.js`)
+if (require.main === module) {
+    const sshClient = createSshTunnel();
+
+    if (sshClient) {
+        console.log('SSH tunnel setup initiated. Keep this process running. Press Ctrl+C to exit.');
+
+        // Graceful shutdown
+        process.on('SIGINT', () => {
+            console.log('\n[Info] SIGINT received, closing SSH tunnel...');
+            if (sshClient) {
+                sshClient.end();
+            }
+            process.exit(0);
+        });
+        process.on('SIGTERM', () => {
+            console.log('\n[Info] SIGTERM received, closing SSH tunnel...');
+            if (sshClient) {
+                sshClient.end();
+            }
+            process.exit(0);
+        });
+
+    } else {
+        console.error('[Fatal] Failed to initiate SSH tunnel setup.');
+        process.exit(1);
+    }
+}
+```
+
+# file: iot-backend/src/models/dataStore.ts
+```typescript
+import type { SensorData, Device, Command, Note } from '@/types';
+
+/**
+ * In-memory data store - easily replaceable with database implementation
+ * This provides a clean abstraction that can be swapped for PostgreSQL, InfluxDB, etc.
+ */
+export class DataStore {
+  private sensorData: Map<string, SensorData[]> = new Map();
+  private devices: Map<string, Device> = new Map();
+  private commands: Map<string, Command> = new Map();
+  private notes: Map<number, Note> = new Map();
+  private nextNoteId = 1;
+
+  // Sensor Data Operations
+  async saveSensorData(data: SensorData): Promise<void> {
+    const deviceData = this.sensorData.get(data.deviceId) || [];
+    deviceData.push(data);
+    
+    // Keep only last 1000 readings per device
+    if (deviceData.length > 1000) {
+      deviceData.splice(0, deviceData.length - 1000);
+    }
+    
+    this.sensorData.set(data.deviceId, deviceData);
+    
+    // Update device last seen
+    const device = this.devices.get(data.deviceId);
+    if (device) {
+      device.lastSeen = data.timestamp;
+      device.status = 'online';
+    } else {
+      // Auto-register new device
+      this.devices.set(data.deviceId, {
+        id: data.deviceId,
+        name: `Device ${data.deviceId}`,
+        type: 'sensor',
+        status: 'online',
+        lastSeen: data.timestamp
+      });
+    }
+  }
+
+  async getLatestSensorData(): Promise<Record<string, SensorData>> {
+    const latest: Record<string, SensorData> = {};
+    
+    for (const [deviceId, dataArray] of this.sensorData.entries()) {
+      if (dataArray.length > 0) {
+        latest[deviceId] = dataArray[dataArray.length - 1]!;
+      }
+    }
+    
+    return latest;
+  }
+
+  async getSensorDataHistory(deviceId: string, limit = 100): Promise<SensorData[]> {
+    const data = this.sensorData.get(deviceId) || [];
+    return data.slice(-limit);
+  }
+
+  // Device Operations
+  async getDevices(): Promise<Device[]> {
+    return Array.from(this.devices.values());
+  }
+
+  async updateDeviceStatus(deviceId: string, status: Device['status'], metadata?: Record<string, any>): Promise<void> {
+    const device = this.devices.get(deviceId);
+    if (device) {
+      device.status = status;
+      device.lastSeen = Date.now();
+      if (metadata) {
+        device.metadata = { ...device.metadata, ...metadata };
+      }
+    }
+  }
+
+  // Command Operations
+  async saveCommand(command: Command): Promise<void> {
+    this.commands.set(command.id, command);
+  }
+
+  async getCommand(id: string): Promise<Command | undefined> {
+    return this.commands.get(id);
+  }
+
+  async getPendingCommands(deviceId?: string): Promise<Command[]> {
+    const commands = Array.from(this.commands.values());
+    return commands.filter(cmd => 
+      cmd.status === 'pending' && 
+      (deviceId ? cmd.deviceId === deviceId : true)
+    );
+  }
+
+  async updateCommandStatus(id: string, status: Command['status']): Promise<void> {
+    const command = this.commands.get(id);
+    if (command) {
+      command.status = status;
+    }
+  }
+
+  // Notes Operations
+  async createNote(noteData: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>): Promise<Note> {
+    const note: Note = {
+      ...noteData,
+      id: this.nextNoteId++,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    this.notes.set(note.id, note);
+    return note;
+  }
+
+  async getNotes(): Promise<Note[]> {
+    return Array.from(this.notes.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  async updateNote(id: number, updates: Partial<Omit<Note, 'id' | 'createdAt'>>): Promise<Note | null> {
+    const note = this.notes.get(id);
+    if (!note) return null;
+
+    const updatedNote = {
+      ...note,
+      ...updates,
+      updatedAt: Date.now()
+    };
+
+    this.notes.set(id, updatedNote);
+    return updatedNote;
+  }
+
+  async deleteNote(id: number): Promise<boolean> {
+    return this.notes.delete(id);
+  }
+
+  // System Operations
+  getSystemStats() {
+    const connectedDevices = Array.from(this.devices.values())
+      .filter(device => device.status === 'online').length;
+    
+    const allSensorData = Array.from(this.sensorData.values()).flat();
+    const lastDataReceived = allSensorData.length > 0 
+      ? Math.max(...allSensorData.map(data => data.timestamp))
+      : 0;
+
+    return {
+      uptime: process.uptime(),
+      connectedDevices,
+      lastDataReceived,
+      totalDevices: this.devices.size,
+      totalDataPoints: allSensorData.length,
+      totalCommands: this.commands.size,
+      totalNotes: this.notes.size
+    };
+  }
+}
+
+// Singleton instance
+export const dataStore = new DataStore();
+
+```
+
+# file: iot-backend/src/plugins/auth.ts
+```typescript
+import fp from 'fastify-plugin';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+
+/**
+ * Authentication plugin - DISABLED for development
+ * All requests are allowed without API key validation
+ */
+export default fp(async function authPlugin(fastify: FastifyInstance) {
+  fastify.decorateRequest('isAuthenticated', true);
+    // Log all requests for debugging
+  fastify.addHook('preHandler', async (request: FastifyRequest) => {
+    fastify.log.info({
+      method: request.method,
+      url: request.url,
+      headers: {
+        'content-type': request.headers['content-type'],
+        'user-agent': request.headers['user-agent'],
+        'content-length': request.headers['content-length']
+      },
+      ip: request.ip
+    }, 'Request received');
+    
+    // Mark all requests as authenticated
+    (request as any).isAuthenticated = true;
+  });
+}, {
+  name: 'auth-plugin'
+});
+
+```
+
+# file: iot-backend/src/plugins/errorHandler.ts
+```typescript
+import fp from 'fastify-plugin';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { createErrorResponse } from '@/utils/helpers';
+
+/**
+ * Global error handler plugin
+ */
+export default fp(async function errorHandler(fastify: FastifyInstance) {
+  // Set custom error handler
+  fastify.setErrorHandler(async (error, request: FastifyRequest, reply: FastifyReply) => {
+    // Log error
+    request.log.error({
+      error: error.message,
+      stack: error.stack,
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      query: request.query,
+      params: request.params
+    }, 'Request error occurred');
+
+    // Handle validation errors
+    if (error.validation) {
+      return reply
+        .status(400)
+        .send(createErrorResponse(`Validation error: ${error.message}`));
+    }
+
+    // Handle known HTTP errors
+    if (error.statusCode) {
+      return reply
+        .status(error.statusCode)
+        .send(createErrorResponse(error.message));
+    }
+
+    // Handle unknown errors
+    const statusCode = error.statusCode || 500;
+    const message = process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : error.message;
+
+    return reply
+      .status(statusCode)
+      .send(createErrorResponse(message));
+  });
+
+  // Not found handler
+  fastify.setNotFoundHandler(async (request: FastifyRequest, reply: FastifyReply) => {
+    request.log.warn({
+      url: request.url,
+      method: request.method
+    }, 'Route not found');
+
+    return reply
+      .status(404)
+      .send(createErrorResponse(`Route ${request.method} ${request.url} not found`));
+  });
+}, {
+  name: 'error-handler'
+});
+
+```
+
+# file: iot-backend/src/plugins/websocket.ts
+```typescript
+import fp from 'fastify-plugin';
+import type { FastifyInstance } from 'fastify';
+import { iotService } from '@/services/iotService';
+
+/**
+ * WebSocket plugin for real-time communication
+ */
+export default fp(async function websocketPlugin(fastify: FastifyInstance) {
+  await fastify.register(require('@fastify/websocket'));
+
+  // WebSocket route
+  fastify.register(async function (fastify) {
+    fastify.get('/ws', { websocket: true }, (connection, request) => {
+      request.log.info('WebSocket client connected');
+
+      // Send initial connection confirmation
+      connection.socket.send(JSON.stringify({
+        type: 'connection',
+        payload: { status: 'connected' },
+        timestamp: Date.now()
+      }));
+
+      // Listen for IoT service events and broadcast to this client
+      const broadcastHandler = (message: any) => {
+        if (connection.socket.readyState === connection.socket.OPEN) {
+          connection.socket.send(JSON.stringify(message));
+        }
+      };
+
+      iotService.on('websocket-broadcast', broadcastHandler);
+
+      // Handle client messages
+      connection.socket.on('message', (message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          request.log.info({ data }, 'WebSocket message received');
+          
+          // Handle different message types
+          switch (data.type) {
+            case 'ping':
+              connection.socket.send(JSON.stringify({
+                type: 'pong',
+                timestamp: Date.now()
+              }));
+              break;
+            case 'subscribe':
+              // Handle subscription logic if needed
+              break;
+            default:
+              request.log.warn({ type: data.type }, 'Unknown WebSocket message type');
+          }
+        } catch (error) {
+          request.log.error({ error }, 'Failed to parse WebSocket message');
+        }
+      });
+
+      // Handle client disconnect
+      connection.socket.on('close', () => {
+        request.log.info('WebSocket client disconnected');
+        iotService.removeListener('websocket-broadcast', broadcastHandler);
+      });
+
+      // Handle errors
+      connection.socket.on('error', (error) => {
+        request.log.error({ error }, 'WebSocket error');
+        iotService.removeListener('websocket-broadcast', broadcastHandler);
+      });
+    });
+  });
+}, {
+  name: 'websocket-plugin'
+});
+
+```
+
+# file: iot-backend/src/routes/config.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+
+export default async function configRoutes(fastify: FastifyInstance) {
+  // GET /api/v1/config/media
+  fastify.get('/media', {
+    schema: {
+      description: 'Get media configuration including video stream URLs and image paths',
+      tags: ['Configuration'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                videoStreamUrl: { type: 'string' },
+                imageUrls: {
+                  type: 'array',
+                  items: { type: 'string' }
+                },
+                thumbnailUrls: {
+                  type: 'array',
+                  items: { type: 'string' }
+                },
+                refreshInterval: { type: 'number' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const mediaConfig = iotService.getMediaConfig();
+      
+      request.log.info('Media configuration requested');
+      
+      return reply.send(createSuccessResponse(mediaConfig));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get media configuration');
+      return reply.status(500).send(createErrorResponse('Failed to get media configuration'));
+    }
+  });
+
+  // GET /api/v1/config/system
+  fastify.get('/system', {
+    schema: {
+      description: 'Get system configuration and capabilities',
+      tags: ['Configuration']
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const systemConfig = {
+        version: '1.0.0',
+        apiVersion: 'v1',
+        features: {
+          websockets: true,
+          realTimeUpdates: true,
+          commandExecution: true,
+          notesTaking: true,
+          deviceManagement: true
+        },
+        limits: {
+          maxDevices: 100,
+          maxHistoryPerDevice: 1000,
+          maxNotes: 1000,
+          maxWebSocketConnections: 50
+        },
+        supportedSensorTypes: [
+          'temperature',
+          'humidity',
+          'pressure',
+          'lightLevel',
+          'motionDetected',
+          'airQuality'
+        ],
+        supportedCommandTypes: [
+          'led_control',
+          'sensor_config',
+          'reboot',
+          'ping',
+          'relay_control'
+        ]
+      };
+      
+      return reply.send(createSuccessResponse(systemConfig));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get system configuration');
+      return reply.status(500).send(createErrorResponse('Failed to get system configuration'));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/control.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { commandSchema } from '@/schemas';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse, sanitizeDeviceId } from '@/utils/helpers';
+import type { Command } from '@/types';
+
+export default async function controlRoutes(fastify: FastifyInstance) {
+  // POST /api/v1/control/command
+  fastify.post<{
+    Body: Omit<Command, 'id' | 'timestamp' | 'status'>;
+  }>('/command', {
+    schema: {
+      description: 'Send a command to an ESP32 device',
+      tags: ['Control'],
+      body: commandSchema,
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                deviceId: { type: 'string' },
+                type: { type: 'string' },
+                payload: { type: 'object' },
+                status: { type: 'string' },
+                timestamp: { type: 'number' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: Omit<Command, 'id' | 'timestamp' | 'status'> }>, reply: FastifyReply) => {
+    try {
+      const commandData = request.body;
+      
+      // Sanitize device ID
+      commandData.deviceId = sanitizeDeviceId(commandData.deviceId);
+        // Validate command type - updated for multi-ESP system
+      const allowedCommands = [
+        // General commands
+        'ping', 'status_request', 'reboot', 'update_config',
+        // Camera commands
+        'cam_start_stream', 'cam_stop_stream', 'cam_take_photo', 
+        'cam_adjust_quality', 'cam_record_start', 'cam_record_stop',
+        // Valve commands
+        'valve_open', 'valve_close', 'valve_toggle', 
+        'valve_set_position', 'valve_get_status', 'valve_emergency_stop',
+        // Legacy commands for backward compatibility
+        'led_control', 'sensor_config', 'relay_control'
+      ];
+      if (!allowedCommands.includes(commandData.type)) {
+        return reply.status(400).send(createErrorResponse(`Invalid command type. Allowed: ${allowedCommands.join(', ')}`));
+      }
+      
+      // Execute command
+      const command = await iotService.executeCommand(commandData);
+      
+      request.log.info({
+        commandId: command.id,
+        deviceId: command.deviceId,
+        type: command.type
+      }, 'Command executed');
+      
+      return reply.send(createSuccessResponse(command));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to execute command');
+      return reply.status(500).send(createErrorResponse('Failed to execute command'));
+    }
+  });
+
+  // GET /api/v1/control/commands/pending
+  fastify.get<{
+    Querystring: { deviceId?: string };
+  }>('/commands/pending', {
+    schema: {
+      description: 'Get pending commands, optionally filtered by device',
+      tags: ['Control'],
+      querystring: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Querystring: { deviceId?: string } }>, reply: FastifyReply) => {
+    try {
+      const { deviceId } = request.query;
+      const sanitizedDeviceId = deviceId ? sanitizeDeviceId(deviceId) : undefined;
+      
+      const pendingCommands = await iotService.getPendingCommands(sanitizedDeviceId);
+      
+      return reply.send(createSuccessResponse({
+        commands: pendingCommands,
+        count: pendingCommands.length
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get pending commands');
+      return reply.status(500).send(createErrorResponse('Failed to get pending commands'));
+    }
+  });
+
+  // PUT /api/v1/control/commands/:commandId/status
+  fastify.put<{
+    Params: { commandId: string };
+    Body: { status: Command['status'] };
+  }>('/commands/:commandId/status', {
+    schema: {
+      description: 'Update command status (typically called by ESP32)',
+      tags: ['Control'],
+      params: {
+        type: 'object',
+        properties: {
+          commandId: { type: 'string' }
+        },
+        required: ['commandId']
+      },
+      body: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['pending', 'sent', 'acknowledged', 'failed'] }
+        },
+        required: ['status']
+      }
+    }
+  }, async (request: FastifyRequest<{ Params: { commandId: string }; Body: { status: Command['status'] } }>, reply: FastifyReply) => {
+    try {
+      const { commandId } = request.params;
+      const { status } = request.body;
+      
+      await iotService.updateCommandStatus(commandId, status);
+      
+      request.log.info({
+        commandId,
+        status
+      }, 'Command status updated');
+      
+      return reply.send(createSuccessResponse({
+        commandId,
+        status,
+        message: 'Command status updated successfully'
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to update command status');
+      return reply.status(500).send(createErrorResponse('Failed to update command status'));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/dashboard.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+
+export default async function dashboardRoutes(fastify: FastifyInstance) {
+  // GET /api/v1/dashboard/data
+  fastify.get('/data', {
+    schema: {
+      description: 'Get complete dashboard data including devices, latest sensor readings, and system status',
+      tags: ['Dashboard'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                devices: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      name: { type: 'string' },
+                      type: { type: 'string' },
+                      status: { type: 'string', enum: ['online', 'offline', 'error'] },
+                      lastSeen: { type: 'number' },
+                      location: { type: 'string' },
+                      metadata: { type: 'object' }
+                    }
+                  }
+                },
+                latestSensorData: { type: 'object' },
+                systemStatus: {
+                  type: 'object',
+                  properties: {
+                    uptime: { type: 'number' },
+                    connectedDevices: { type: 'number' },
+                    lastDataReceived: { type: 'number' }
+                  }
+                }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const dashboardData = await iotService.getDashboardData();
+      
+      request.log.info({
+        deviceCount: dashboardData.devices.length,
+        connectedDevices: dashboardData.systemStatus.connectedDevices
+      }, 'Dashboard data requested');
+      
+      return reply.send(createSuccessResponse(dashboardData));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get dashboard data');
+      return reply.status(500).send(createErrorResponse('Failed to get dashboard data'));
+    }
+  });
+
+  // GET /api/v1/dashboard/devices
+  fastify.get('/devices', {
+    schema: {
+      description: 'Get all registered devices',
+      tags: ['Dashboard'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  name: { type: 'string' },
+                  type: { type: 'string' },
+                  status: { type: 'string' },
+                  lastSeen: { type: 'number' }
+                }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const dashboardData = await iotService.getDashboardData();
+      return reply.send(createSuccessResponse(dashboardData.devices));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get devices');
+      return reply.status(500).send(createErrorResponse('Failed to get devices'));
+    }
+  });
+
+  // GET /api/v1/dashboard/system-status
+  fastify.get('/system-status', {
+    schema: {
+      description: 'Get system status and statistics',
+      tags: ['Dashboard']
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const dashboardData = await iotService.getDashboardData();
+      return reply.send(createSuccessResponse(dashboardData.systemStatus));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get system status');
+      return reply.status(500).send(createErrorResponse('Failed to get system status'));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/devices.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import { dataService, type DeviceInfo } from '@/services/dataService';
+
+export default async function deviceRoutes(fastify: FastifyInstance) {
+  // GET /api/v1/devices/devices - List all devices
+  fastify.get('/devices', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const devices = dataService.getAllDevices();
+      const systemStatus = dataService.getSystemStatus();
+      
+      fastify.log.info(`Returning ${devices.length} devices`);
+      
+      return reply.send(createSuccessResponse({
+        devices,
+        systemStatus
+      }));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to retrieve devices'));
+    }
+  });
+
+  // GET /api/v1/devices/:deviceId - Get specific device info
+  fastify.get<{
+    Params: { deviceId: string }
+  }>('/devices/:deviceId', async (request: FastifyRequest<{ Params: { deviceId: string } }>, reply: FastifyReply) => {
+    try {
+      const { deviceId } = request.params;
+      const device = dataService.getDevice(deviceId);
+      
+      if (!device) {
+        return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found`));
+      }
+      
+      return reply.send(createSuccessResponse(device));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to retrieve device information'));
+    }
+  });
+
+  // POST /api/v1/devices/register - Register a new device
+  fastify.post<{
+    Body: {
+      deviceId: string;
+      deviceName: string;
+      deviceType: 'camera' | 'valve' | 'master';
+      ipAddress: string;
+      capabilities?: string[];
+    }
+  }>('/devices/register', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
+    try {
+      const body = request.body as any;
+      const { deviceId, deviceName, deviceType, ipAddress, capabilities = [] } = body;
+      
+      // Validate required fields
+      if (!deviceId || !deviceName || !deviceType || !ipAddress) {
+        return reply.status(400).send(createErrorResponse('Missing required fields: deviceId, deviceName, deviceType, ipAddress'));
+      }
+      
+      const device: DeviceInfo = {
+        deviceId,
+        deviceName,
+        deviceType,
+        status: 'online',
+        ipAddress,
+        lastHeartbeat: Date.now(),
+        uptime: 0,
+        freeHeap: 0,
+        errorCount: 0,
+        capabilities
+      };
+      
+      await dataService.setDevice(deviceId, device);
+      
+      fastify.log.info(`Device registered: ${deviceName} (${deviceId}) at ${ipAddress}`);
+      
+      return reply.send(createSuccessResponse({
+        message: 'Device registered successfully',
+        device
+      }));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to register device'));
+    }
+  });
+
+  // POST /api/v1/devices/heartbeat - General heartbeat endpoint
+  fastify.post<{
+    Body: {
+      deviceId: string;
+      status?: 'online' | 'offline' | 'error' | 'maintenance';
+      uptime?: number;
+      freeHeap?: number;
+      wifiRssi?: number;
+    }
+  }>('/devices/heartbeat', async (request: FastifyRequest<{ Body: any }>, reply: FastifyReply) => {
+    try {
+      const body = request.body as any;
+      const { deviceId, status, uptime, freeHeap, wifiRssi } = body;
+      
+      if (!deviceId) {
+        return reply.status(400).send(createErrorResponse('deviceId is required'));
+      }
+      
+      let device = dataService.getDevice(deviceId);
+      if (!device) {
+        fastify.log.warn(`Heartbeat for unregistered device: ${deviceId}`);
+        return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found. Please register first.`));
+      }
+      
+      // Update device info
+      device.lastHeartbeat = Date.now();
+      if (status) device.status = status;
+      if (uptime !== undefined) device.uptime = uptime;
+      if (freeHeap !== undefined) device.freeHeap = freeHeap;
+      if (wifiRssi !== undefined) device.wifiRssi = wifiRssi;
+      
+      await dataService.setDevice(deviceId, device);
+      
+      fastify.log.debug(`Heartbeat updated for device: ${deviceId}`);
+      
+      return reply.send(createSuccessResponse({
+        message: 'Heartbeat updated successfully',
+        device
+      }));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to update heartbeat'));
+    }
+  });
+
+  // GET /api/v1/devices/system/status - Get system status
+  fastify.get('/system/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const systemStatus = dataService.getSystemStatus();
+      
+      return reply.send(createSuccessResponse({
+        systemStatus,
+        timestamp: Date.now()
+      }));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to retrieve system status'));
+    }
+  });
+
+  // DELETE /api/v1/devices/:deviceId - Unregister device
+  fastify.delete<{
+    Params: { deviceId: string }
+  }>('/devices/:deviceId', async (request: FastifyRequest<{ Params: { deviceId: string } }>, reply: FastifyReply) => {
+    try {
+      const { deviceId } = request.params;
+      
+      if (!dataService.deviceExists(deviceId)) {
+        return reply.status(404).send(createErrorResponse(`Device ${deviceId} not found`));
+      }
+      
+      await dataService.deleteDevice(deviceId);
+      
+      fastify.log.info(`Device unregistered: ${deviceId}`);
+      
+      return reply.send(createSuccessResponse({
+        message: `Device ${deviceId} unregistered successfully`
+      }));
+    } catch (error) {
+      fastify.log.error(error);
+      return reply.status(500).send(createErrorResponse('Failed to unregister device'));
+    }
+  });
+}
+
+// Export function to get device (for use in other routes)
+export function getDevice(deviceId: string): DeviceInfo | undefined {
+  return dataService.getDevice(deviceId);
+}
+
+// Export function to check if device exists (for use in other routes)
+export function deviceExists(deviceId: string): boolean {
+  return dataService.deviceExists(deviceId);
+}
+
+// Export function to register device automatically (for stream route)
+export async function autoRegisterDevice(deviceId: string, ipAddress: string): Promise<DeviceInfo> {
+  return await dataService.autoRegisterDevice(deviceId, ipAddress);
+}
+```
+
+# file: iot-backend/src/routes/devices_new.ts
+```typescript
+
+```
+
+# file: iot-backend/src/routes/gemini.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { geminiPromptSchema, geminiAnalysisSchema } from '@/schemas';
+import { geminiService } from '@/services/geminiService';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import type { GeminiRequest, GeminiFileUpload } from '@/types';
+
+export default async function geminiRoutes(fastify: FastifyInstance) {
+  // Register multipart support
+  await fastify.register(require('@fastify/multipart'), {
+    limits: {
+      fileSize: geminiService.getMaxFileSize()
+    }
+  });
+
+  // GET /api/v1/ai/config
+  fastify.get('/config', {
+    schema: {
+      description: 'Get Gemini AI service configuration and capabilities',
+      tags: ['AI'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                available: { type: 'boolean' },
+                model: { type: 'string' },
+                supportedFormats: {
+                  type: 'array',
+                  items: { type: 'string' }
+                },
+                maxFileSize: { type: 'number' },
+                maxFileSizeFormatted: { type: 'string' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const config = geminiService.getConfiguration();
+      return reply.send(createSuccessResponse(config));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get Gemini configuration');
+      return reply.status(500).send(createErrorResponse('Failed to get AI service configuration'));
+    }
+  });
+
+  // POST /api/v1/ai/generate
+  fastify.post<{
+    Body: Omit<GeminiRequest, 'files'>;
+  }>('/generate', {
+    schema: {
+      description: 'Generate text response using Gemini AI',
+      tags: ['AI'],
+      body: geminiPromptSchema,
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                response: { type: 'string' },
+                processingTime: { type: 'number' },
+                model: { type: 'string' },
+                timestamp: { type: 'number' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: Omit<GeminiRequest, 'files'> }>, reply: FastifyReply) => {
+    try {
+      if (!geminiService.isAvailable()) {
+        return reply.status(503).send(createErrorResponse('Gemini AI service is not available'));
+      }
+
+      const response = await geminiService.generateResponse(request.body);
+      
+      request.log.info({
+        requestId: response.id,
+        processingTime: response.processingTime,
+        promptLength: request.body.prompt.length
+      }, 'Gemini text generation completed');
+
+      return reply.send(createSuccessResponse(response));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to generate text with Gemini');
+      return reply.status(500).send(createErrorResponse(
+        error instanceof Error ? error.message : 'Failed to generate text'
+      ));
+    }
+  });
+
+  // POST /api/v1/ai/generate-multimodal
+  fastify.post('/generate-multimodal', {
+    schema: {
+      description: 'Generate response with multimodal input (text, images, audio, video)',
+      tags: ['AI'],
+      consumes: ['multipart/form-data'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                response: { type: 'string' },
+                processingTime: { type: 'number' },
+                model: { type: 'string' },
+                timestamp: { type: 'number' },
+                filesProcessed: { type: 'number' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      if (!geminiService.isAvailable()) {
+        return reply.status(503).send(createErrorResponse('Gemini AI service is not available'));
+      }
+
+      const data = await request.file();
+      if (!data) {
+        return reply.status(400).send(createErrorResponse('No form data provided'));
+      }
+
+      // Parse multipart form data
+      const parts = await request.saveRequestFiles();
+      const fields: Record<string, any> = {};
+      const files: GeminiFileUpload[] = [];
+
+      // Extract form fields and files
+      for (const part of parts) {
+        if (part.fieldname === 'files' && part.file) {
+          const buffer = await part.file.toBuffer();
+          files.push({
+            buffer,
+            filename: part.filename || 'unknown',
+            mimetype: part.mimetype,
+            size: buffer.length
+          });
+        } else {
+          // Handle form fields
+          const buffer = await part.file.toBuffer();
+          fields[part.fieldname] = buffer.toString();
+        }
+      }
+
+      // Validate required fields
+      if (!fields.prompt) {
+        return reply.status(400).send(createErrorResponse('Prompt is required'));
+      }
+
+      // Prepare Gemini request
+      const geminiRequest: GeminiRequest = {
+        prompt: fields.prompt,
+        files,
+        context: fields.context,
+        temperature: fields.temperature ? parseFloat(fields.temperature) : undefined,
+        maxTokens: fields.maxTokens ? parseInt(fields.maxTokens, 10) : undefined,
+        userId: fields.userId
+      };
+
+      const response = await geminiService.generateResponse(geminiRequest);
+      
+      request.log.info({
+        requestId: response.id,
+        processingTime: response.processingTime,
+        filesCount: files.length,
+        promptLength: geminiRequest.prompt.length
+      }, 'Gemini multimodal generation completed');
+
+      return reply.send(createSuccessResponse({
+        ...response,
+        filesProcessed: files.length
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to generate multimodal response');
+      return reply.status(500).send(createErrorResponse(
+        error instanceof Error ? error.message : 'Failed to generate multimodal response'
+      ));
+    }
+  });
+
+  // POST /api/v1/ai/analyze
+  fastify.post<{
+    Body: Omit<GeminiRequest, 'files'>;
+  }>('/analyze', {
+    schema: {
+      description: 'Analyze content and provide structured insights',
+      tags: ['AI'],
+      body: geminiAnalysisSchema,
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                analysis: { type: 'string' },
+                insights: {
+                  type: 'array',
+                  items: { type: 'string' }
+                },
+                recommendations: {
+                  type: 'array',
+                  items: { type: 'string' }
+                },
+                confidence: { type: 'number' },
+                fileAnalysis: { type: 'object' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: Omit<GeminiRequest, 'files'> }>, reply: FastifyReply) => {
+    try {
+      if (!geminiService.isAvailable()) {
+        return reply.status(503).send(createErrorResponse('Gemini AI service is not available'));
+      }
+
+      const analysis = await geminiService.analyzeContent(request.body);
+      
+      request.log.info({
+        confidence: analysis.confidence,
+        insightsCount: analysis.insights.length,
+        recommendationsCount: analysis.recommendations.length
+      }, 'Gemini content analysis completed');
+
+      return reply.send(createSuccessResponse(analysis));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to analyze content with Gemini');
+      return reply.status(500).send(createErrorResponse(
+        error instanceof Error ? error.message : 'Failed to analyze content'
+      ));
+    }
+  });
+
+  // POST /api/v1/ai/analyze-iot
+  fastify.post<{
+    Querystring: { deviceId?: string; timeRange?: string };
+  }>('/analyze-iot', {
+    schema: {
+      description: 'Analyze IoT sensor data with AI insights',
+      tags: ['AI'],
+      querystring: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' },
+          timeRange: { type: 'string', enum: ['1h', '6h', '24h', '7d'] }
+        }
+      },
+      consumes: ['multipart/form-data']
+    }
+  }, async (request: FastifyRequest<{ Querystring: { deviceId?: string; timeRange?: string } }>, reply: FastifyReply) => {
+    try {
+      if (!geminiService.isAvailable()) {
+        return reply.status(503).send(createErrorResponse('Gemini AI service is not available'));
+      }
+
+      const { deviceId, timeRange = '24h' } = request.query;
+
+      // Get IoT data
+      const dashboardData = await iotService.getDashboardData();
+      let sensorData: any;
+
+      if (deviceId) {
+        // Get specific device data
+        const history = await iotService.getSensorHistory(deviceId, 100);
+        sensorData = {
+          device: dashboardData.devices.find(d => d.id === deviceId),
+          latestReading: dashboardData.latestSensorData[deviceId],
+          history: history.slice(-50) // Last 50 readings
+        };
+      } else {
+        // Get all data
+        sensorData = {
+          devices: dashboardData.devices,
+          latestReadings: dashboardData.latestSensorData,
+          systemStatus: dashboardData.systemStatus
+        };
+      }
+
+      // Handle multipart files if present
+      let files: GeminiFileUpload[] = [];
+      try {
+        const parts = await request.saveRequestFiles();
+        for (const part of parts) {
+          if (part.fieldname === 'files' && part.file) {
+            const buffer = await part.file.toBuffer();
+            files.push({
+              buffer,
+              filename: part.filename || 'unknown',
+              mimetype: part.mimetype,
+              size: buffer.length
+            });
+          }
+        }
+      } catch (error) {
+        // No multipart data, that's fine
+      }
+
+      const analysis = await geminiService.analyzeIoTData(
+        sensorData,
+        files,
+        `Time range: ${timeRange}. Focus on actionable insights for IoT system optimization.`
+      );
+
+      request.log.info({
+        deviceId,
+        timeRange,
+        filesCount: files.length,
+        confidence: analysis.confidence
+      }, 'IoT data analysis completed');
+
+      return reply.send(createSuccessResponse({
+        ...analysis,
+        deviceId,
+        timeRange,
+        dataPoints: Array.isArray(sensorData.history) ? sensorData.history.length : Object.keys(sensorData.latestReadings || {}).length
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to analyze IoT data');
+      return reply.status(500).send(createErrorResponse(
+        error instanceof Error ? error.message : 'Failed to analyze IoT data'
+      ));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/ingest.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { sensorDataSchema } from '@/schemas';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse, sanitizeDeviceId } from '@/utils/helpers';
+import type { SensorData } from '@/types';
+
+export default async function ingestRoutes(fastify: FastifyInstance) {
+  // POST /api/v1/ingest/sensor-data
+  fastify.post<{
+    Body: SensorData;
+  }>('/sensor-data', {
+    schema: {
+      description: 'Ingest sensor data from ESP32 devices',
+      tags: ['Ingestion'],
+      body: sensorDataSchema,
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: { type: 'object' },
+            timestamp: { type: 'number' }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            error: { type: 'string' },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: SensorData }>, reply: FastifyReply) => {
+    try {
+      const sensorData = request.body;
+      
+      // Sanitize device ID
+      sensorData.deviceId = sanitizeDeviceId(sensorData.deviceId);
+      
+      // Process the sensor data
+      await iotService.processSensorData(sensorData);
+      
+      request.log.info({ 
+        deviceId: sensorData.deviceId,
+        dataKeys: Object.keys(sensorData).filter(key => key !== 'deviceId' && key !== 'timestamp')
+      }, 'Sensor data ingested successfully');
+      
+      return reply.send(createSuccessResponse({ 
+        message: 'Sensor data ingested successfully',
+        deviceId: sensorData.deviceId 
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to ingest sensor data');
+      return reply.status(500).send(createErrorResponse('Failed to ingest sensor data'));
+    }
+  });
+
+  // GET /api/v1/ingest/sensor-data/history/:deviceId
+  fastify.get<{
+    Params: { deviceId: string };
+    Querystring: { limit?: string };
+  }>('/sensor-data/history/:deviceId', {
+    schema: {
+      description: 'Get sensor data history for a specific device',
+      tags: ['Ingestion'],
+      params: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string' }
+        },
+        required: ['deviceId']
+      },
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'string', pattern: '^[0-9]+$' }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Params: { deviceId: string }; Querystring: { limit?: string } }>, reply: FastifyReply) => {
+    try {
+      const { deviceId } = request.params;
+      const limit = request.query.limit ? parseInt(request.query.limit, 10) : 100;
+      
+      if (limit > 1000) {
+        return reply.status(400).send(createErrorResponse('Limit cannot exceed 1000'));
+      }
+      
+      const sanitizedDeviceId = sanitizeDeviceId(deviceId);
+      const history = await iotService.getSensorHistory(sanitizedDeviceId, limit);
+      
+      return reply.send(createSuccessResponse({
+        deviceId: sanitizedDeviceId,
+        data: history,
+        count: history.length
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get sensor data history');
+      return reply.status(500).send(createErrorResponse('Failed to get sensor data history'));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/notes.ts
+```typescript
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { noteCreateSchema, noteUpdateSchema } from '@/schemas';
+import { iotService } from '@/services/iotService';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import type { Note } from '@/types';
+
+export default async function notesRoutes(fastify: FastifyInstance) {
+  // GET /api/v1/dashboard/notes
+  fastify.get('/', {
+    schema: {
+      description: 'Get all notes',
+      tags: ['Notes'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'number' },
+                  title: { type: 'string' },
+                  content: { type: 'string' },
+                  createdAt: { type: 'number' },
+                  updatedAt: { type: 'number' },
+                  userId: { type: 'string' }
+                }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const notes = await iotService.getNotes();
+      return reply.send(createSuccessResponse(notes));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to get notes');
+      return reply.status(500).send(createErrorResponse('Failed to get notes'));
+    }
+  });
+
+  // POST /api/v1/dashboard/notes
+  fastify.post<{
+    Body: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>;  }>('/', {
+    schema: {
+      body: noteCreateSchema,
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                id: { type: 'number' },
+                title: { type: 'string' },
+                content: { type: 'string' },
+                createdAt: { type: 'number' },
+                updatedAt: { type: 'number' }
+              }
+            },
+            timestamp: { type: 'number' }
+          }
+        }
+      }
+    }
+  }, async (request: FastifyRequest<{ Body: Omit<Note, 'id' | 'createdAt' | 'updatedAt'> }>, reply: FastifyReply) => {
+    try {
+      const noteData = request.body;
+      const note = await iotService.createNote(noteData);
+      
+      request.log.info({
+        noteId: note.id,
+        title: note.title
+      }, 'Note created');
+      
+      return reply.status(201).send(createSuccessResponse(note));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to create note');
+      return reply.status(500).send(createErrorResponse('Failed to create note'));
+    }
+  });
+
+  // PUT /api/v1/dashboard/notes/:id
+  fastify.put<{
+    Params: { id: string };
+    Body: Partial<Omit<Note, 'id' | 'createdAt'>>;  }>('/:id', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[0-9]+$' }
+        },
+        required: ['id']
+      },
+      body: noteUpdateSchema
+    }
+  }, async (request: FastifyRequest<{ Params: { id: string }; Body: Partial<Omit<Note, 'id' | 'createdAt'>> }>, reply: FastifyReply) => {
+    try {
+      const noteId = parseInt(request.params.id, 10);
+      const updates = request.body;
+      
+      if (isNaN(noteId)) {
+        return reply.status(400).send(createErrorResponse('Invalid note ID'));
+      }
+      
+      const updatedNote = await iotService.updateNote(noteId, updates);
+      
+      if (!updatedNote) {
+        return reply.status(404).send(createErrorResponse('Note not found'));
+      }
+      
+      request.log.info({
+        noteId,
+        updatedFields: Object.keys(updates)
+      }, 'Note updated');
+      
+      return reply.send(createSuccessResponse(updatedNote));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to update note');
+      return reply.status(500).send(createErrorResponse('Failed to update note'));
+    }
+  });
+
+  // DELETE /api/v1/dashboard/notes/:id
+  fastify.delete<{
+    Params: { id: string };  }>('/:id', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', pattern: '^[0-9]+$' }
+        },
+        required: ['id']
+      }
+    }
+  }, async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const noteId = parseInt(request.params.id, 10);
+      
+      if (isNaN(noteId)) {
+        return reply.status(400).send(createErrorResponse('Invalid note ID'));
+      }
+      
+      const deleted = await iotService.deleteNote(noteId);
+      
+      if (!deleted) {
+        return reply.status(404).send(createErrorResponse('Note not found'));
+      }
+      
+      request.log.info({ noteId }, 'Note deleted');
+      
+      return reply.send(createSuccessResponse({
+        message: 'Note deleted successfully',
+        noteId
+      }));
+    } catch (error) {
+      request.log.error({ error }, 'Failed to delete note');
+      return reply.status(500).send(createErrorResponse('Failed to delete note'));
+    }
+  });
+}
+
+```
+
+# file: iot-backend/src/routes/stream.ts
+```typescript
+import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { createSuccessResponse, createErrorResponse } from '@/utils/helpers';
+import { dataService } from '@/services/dataService';
+import { autoRegisterDevice, deviceExists } from '@/routes/devices';
+
+// In-memory circular buffer to store frames (30 seconds at 10 FPS = 300 frames)
+class FrameBuffer {
+  private buffer: Buffer[] = [];
+  private maxSize = 300;
+  private currentIndex = 0;
+
+  addFrame(frame: Buffer): void {
+    if (this.buffer.length < this.maxSize) {
+      this.buffer.push(frame);
+    } else {
+      this.buffer[this.currentIndex] = frame;
+      this.currentIndex = (this.currentIndex + 1) % this.maxSize;
+    }
+  }
+
+  getAllFrames(): Buffer[] {
+    if (this.buffer.length < this.maxSize) {
+      return [...this.buffer];
+    }
+    
+    // Return frames in chronological order (oldest first)
+    const frames = [
+      ...this.buffer.slice(this.currentIndex),
+      ...this.buffer.slice(0, this.currentIndex)
+    ];
+    return frames;
+  }
+
+  getFrameCount(): number {
+    return this.buffer.length;
+  }
+}
+
+// Global frame buffer instance
+const frameBuffer = new FrameBuffer();
+
+// Set to store WebSocket connections for live streaming
+const liveViewers = new Set<any>();
+
+const streamRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {  // Register multipart support for this route
+  await fastify.register(require('@fastify/multipart'), {
+    limits: {
+      fileSize: 5 * 1024 * 1024, // 5MB max file size
+    }
+  });
+
+  // POST /stream - Receive frames from ESP32
+  fastify.post('/stream', {
+    schema: {
+      consumes: ['multipart/form-data'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' }
+          }
+        }
+      }
+    }  }, async (request, reply) => {
+    try {
+      // Log incoming request details for debugging
+      fastify.log.info('Incoming stream request:', {
+        contentType: request.headers['content-type'],
+        contentLength: request.headers['content-length'],
+        userAgent: request.headers['user-agent'],
+        apiKey: request.headers['x-api-key']
+      });
+
+      const data = await (request as any).file();
+      
+      if (!data) {
+        fastify.log.error('No file data received in multipart request');
+        return reply.code(400).send(createErrorResponse('No file data found in request'));
+      }
+
+      if (data.fieldname !== 'image') {
+        fastify.log.error(`Wrong fieldname received: "${data.fieldname}", expected "image"`);
+        return reply.code(400).send(createErrorResponse(`Expected fieldname 'image', got '${data.fieldname}'`));
+      }
+
+      // Read the file buffer
+      const buffer = await data.toBuffer();
+      
+      if (buffer.length === 0) {
+        fastify.log.error('Empty file buffer received');
+        return reply.code(400).send(createErrorResponse('Empty file received'));
+      }      // Log successful frame reception
+      fastify.log.debug(`Frame received successfully. Size: ${buffer.length} bytes, MIME: ${data.mimetype}`);
+
+      // Auto-register device if not already registered (for backward compatibility)
+      const userAgent = request.headers['user-agent'] as string;
+      if (userAgent && userAgent.includes('ESP32')) {
+        const deviceId = extractDeviceIdFromUserAgent(userAgent) || 'ESP32-CAM-UNKNOWN';
+        if (!deviceExists(deviceId)) {
+          await autoRegisterDevice(deviceId, request.ip);
+        }
+      }
+
+      // Save image to data folder for persistence
+      try {
+        const deviceId = extractDeviceIdFromUserAgent(userAgent || '') || 'ESP32-CAM-UNKNOWN';
+        await dataService.saveImage(deviceId, buffer, data.mimetype);
+      } catch (saveError) {
+        fastify.log.warn({ error: saveError }, 'Failed to save image to data folder');
+      }
+
+      // Add frame to circular buffer
+      frameBuffer.addFrame(buffer);// Broadcast frame to all connected WebSocket clients
+      const base64Frame = buffer.toString('base64');
+      liveViewers.forEach((ws) => {
+        if ((ws as any).readyState === 1) { // WebSocket.OPEN
+          try {
+            (ws as any).send(JSON.stringify({
+              type: 'frame',
+              data: base64Frame,
+              timestamp: Date.now()
+            }));
+          } catch (error) {
+            fastify.log.error({ error }, 'Error sending frame to WebSocket client');
+            liveViewers.delete(ws);
+          }
+        } else {
+          liveViewers.delete(ws);
+        }
+      });
+
+      fastify.log.debug(`Frame received and processed. Buffer size: ${frameBuffer.getFrameCount()}`);
+
+      return reply.send(createSuccessResponse({
+        message: 'Frame received successfully',
+        bufferSize: frameBuffer.getFrameCount()
+      }));
+
+    } catch (error) {
+      fastify.log.error({ error }, 'Error processing frame upload');
+      return reply.code(500).send(createErrorResponse('Internal server error processing frame'));
+    }
+  });  // GET /live - WebSocket endpoint for live streaming
+  fastify.register(async function (fastify) {
+    fastify.get('/live', { websocket: true } as any, (connection: any, _request: any) => {
+      fastify.log.info('New WebSocket client connected for live stream');
+      
+      // Add connection to live viewers
+      liveViewers.add(connection.socket);
+
+      // Send initial connection confirmation
+      (connection.socket as any).send(JSON.stringify({
+        type: 'connected',
+        message: 'Connected to live stream',
+        timestamp: Date.now()
+      }));
+
+      // Handle connection close
+      connection.socket.on('close', () => {
+        fastify.log.info('WebSocket client disconnected from live stream');
+        liveViewers.delete(connection.socket);
+      });
+
+      // Handle connection errors
+      connection.socket.on('error', (error) => {
+        fastify.log.error({ error }, 'WebSocket connection error');
+        liveViewers.delete(connection.socket);
+      });
+
+      // Handle incoming messages (if needed for future features)
+      connection.socket.on('message', (message) => {
+        try {
+          const data = JSON.parse(message.toString());
+          fastify.log.debug({ data }, 'Received WebSocket message');
+          
+          // Handle ping/pong for connection keep-alive
+          if (data.type === 'ping') {
+            (connection.socket as any).send(JSON.stringify({
+              type: 'pong',
+              timestamp: Date.now()
+            }));
+          }
+        } catch (error) {
+          fastify.log.error({ error }, 'Error parsing WebSocket message');
+        }
+      });
+    });
+  });
+  // POST /record - Save last 30 seconds of footage
+  fastify.post('/record', {
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                status: { type: 'string' },
+                message: { type: 'string' },
+                recordingId: { type: 'string' },
+                frameCount: { type: 'number' }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, async (_request, reply) => {
+    try {
+      const frames = frameBuffer.getAllFrames();
+      
+      if (frames.length === 0) {
+        return reply.code(400).send(createErrorResponse('No frames available to record'));
+      }
+
+      // Create timestamp-based recording ID
+      const now = new Date();
+      const recordingId = `recording_${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+      
+      // Use data service to save recording
+      await dataService.saveRecording('ESP32-CAM-MAIN', frames, recordingId);
+
+      fastify.log.info(`Recording saved: ${recordingId} with ${frames.length} frames`);
+
+      return reply.send(createSuccessResponse({
+        status: 'success',
+        message: 'Recording saved.',
+        recordingId,
+        frameCount: frames.length
+      }));
+
+    } catch (error) {
+      fastify.log.error({ error }, 'Error saving recording');
+      return reply.code(500).send(createErrorResponse('Internal server error saving recording'));
+    }
+  });
+  // GET /recordings - List all available recordings
+  fastify.get('/recordings', {
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  recordingId: { type: 'string' },
+                  deviceId: { type: 'string' },
+                  timestamp: { type: 'string' },
+                  frameCount: { type: 'number' }
+                }
+              }
+            }
+          }
+        }
+      }
+    }  }, async (_request, reply) => {
+    try {
+      const recordings = await dataService.getRecordings();
+      return reply.send(createSuccessResponse(recordings));
+    } catch (error) {
+      fastify.log.error({ error }, 'Error listing recordings');
+      return reply.code(500).send(createErrorResponse('Internal server error listing recordings'));
+    }
+  });
+
+  // GET /recordings/:id/frames/:frameNumber - Get specific frame from recording
+  fastify.get('/recordings/:id/frames/:frameNumber', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['id', 'frameNumber'],
+        properties: {
+          id: { type: 'string' },
+          frameNumber: { type: 'string' }
+        }
+      }
+    }  }, async (request, reply) => {
+    try {
+      const { id, frameNumber } = request.params as { id: string; frameNumber: string };
+      
+      const recordingPath = path.join(dataService.getRecordingsDir(), id);
+      const framePath = path.join(recordingPath, `frame_${frameNumber.padStart(4, '0')}.jpg`);
+      
+      try {
+        const frameBuffer = await fs.readFile(framePath);
+        reply.type('image/jpeg');
+        return reply.send(frameBuffer);
+      } catch (readError) {
+        return reply.code(404).send(createErrorResponse('Frame not found'));
+      }
+
+    } catch (error) {
+      fastify.log.error({ error }, 'Error retrieving frame');
+      return reply.code(500).send(createErrorResponse('Internal server error retrieving frame'));
+    }
+  });
+
+  // GET /status - Get streaming status and buffer info
+  fastify.get('/status', {
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object',
+              properties: {
+                bufferSize: { type: 'number' },
+                maxBufferSize: { type: 'number' },
+                connectedViewers: { type: 'number' },
+                uptime: { type: 'number' }
+              }
+            }
+          }        }
+      }
+    }
+  }, async (_request, reply) => {
+    return reply.send(createSuccessResponse({
+      bufferSize: frameBuffer.getFrameCount(),
+      maxBufferSize: 300,
+      connectedViewers: liveViewers.size,
+      uptime: process.uptime()
+    }));
+  });
+};
+
+// Helper functions for device auto-registration
+function extractDeviceIdFromUserAgent(userAgent: string): string | null {
+  // Try to extract device ID from User-Agent header
+  const match = userAgent.match(/ESP32[_-]?([A-Z0-9_-]+)/i);
+  return match ? `ESP32-${match[1]}` : null;
+}
+
+export default streamRoutes;
+
+```
+
+# file: iot-backend/src/schemas/index.ts
+```typescript
+export const sensorDataSchema = {
+  type: 'object',
+  required: ['deviceId', 'timestamp'],
+  properties: {
+    deviceId: { type: 'string', minLength: 1, maxLength: 50 },
+    timestamp: { type: 'number', minimum: 0 },
+    temperature: { type: 'number', minimum: -100, maximum: 100 },
+    humidity: { type: 'number', minimum: 0, maximum: 100 },
+    pressure: { type: 'number', minimum: 0 },
+    lightLevel: { type: 'number', minimum: 0, maximum: 100 },
+    motionDetected: { type: 'boolean' },
+    airQuality: { type: 'number', minimum: 0, maximum: 500 }
+  },
+  additionalProperties: true
+} as const;
+
+export const commandSchema = {
+  type: 'object',
+  required: ['deviceId', 'type', 'payload'],
+  properties: {
+    deviceId: { type: 'string', minLength: 1, maxLength: 50 },
+    type: { type: 'string', minLength: 1, maxLength: 50 },
+    payload: { type: 'object' },
+    userId: { type: 'string', maxLength: 50 }
+  },
+  additionalProperties: false
+} as const;
+
+export const noteCreateSchema = {
+  type: 'object',
+  required: ['title', 'content'],
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 200 },
+    content: { type: 'string', minLength: 1, maxLength: 5000 },
+    userId: { type: 'string', maxLength: 50 }
+  },
+  additionalProperties: false
+} as const;
+
+export const noteUpdateSchema = {
+  type: 'object',
+  properties: {
+    title: { type: 'string', minLength: 1, maxLength: 200 },
+    content: { type: 'string', minLength: 1, maxLength: 5000 },
+    userId: { type: 'string', maxLength: 50 }
+  },
+  additionalProperties: false,
+  minProperties: 1
+} as const;
+
+export const deviceStatusSchema = {
+  type: 'object',
+  required: ['deviceId', 'status'],
+  properties: {
+    deviceId: { type: 'string', minLength: 1, maxLength: 50 },
+    status: { type: 'string', enum: ['online', 'offline', 'error'] },
+    metadata: { type: 'object' }
+  },
+  additionalProperties: false
+} as const;
+
+// Gemini AI Schemas
+export const geminiPromptSchema = {
+  type: 'object',
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', minLength: 1, maxLength: 10000 },
+    context: { type: 'string', maxLength: 2000 },
+    temperature: { type: 'number', minimum: 0, maximum: 2 },
+    maxTokens: { type: 'number', minimum: 1, maximum: 8192 },
+    userId: { type: 'string', maxLength: 50 }
+  },
+  additionalProperties: false
+} as const;
+
+export const geminiAnalysisSchema = {
+  type: 'object',
+  required: ['prompt'],
+  properties: {
+    prompt: { type: 'string', minLength: 1, maxLength: 10000 },
+    context: { type: 'string', maxLength: 2000 },
+    sensorData: { type: 'object' },
+    userId: { type: 'string', maxLength: 50 }
+  },
+  additionalProperties: false
+} as const;
+
+```
+
+# file: iot-backend/src/server.ts
+```typescript
+import Fastify from 'fastify';
+import { config } from 'dotenv';
+import { validateEnvironment, parseCorsOrigins, createSuccessResponse } from '@/utils/helpers';
+import type { EnvironmentConfig } from '@/types';
+import { createSshTunnel } from '@/job/tunnel';
+import { dataService } from '@/services/dataService';
+
+// Load environment variables
+config();
+
+// Validate environment
+validateEnvironment();
+
+// Create Fastify instance with enhanced logging
+const fastify = Fastify({
+  logger: {
+    level: process.env.LOG_LEVEL || 'info',
+    ...(process.env.NODE_ENV === 'production' && {
+      redact: ['req.headers.authorization', 'req.headers["x-api-key"]']
+    })
+  }
+});
+
+// Environment configuration
+const envConfig: EnvironmentConfig = {
+  PORT: parseInt(process.env.PORT || '9003', 10),
+  HOST: process.env.HOST || '0.0.0.0',
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  JWT_SECRET: process.env.JWT_SECRET || 'dev-jwt-secret',
+  API_KEY: process.env.API_KEY || 'dev-api-key',
+  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '1000', 10),
+  RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),  LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+  ...(process.env.DATABASE_URL && { DATABASE_URL: process.env.DATABASE_URL })
+};
+
+async function buildApp() {
+  try {
+    // Register environment plugin
+    await fastify.register(require('@fastify/env'), {
+      schema: {
+        type: 'object',
+        required: ['PORT', 'HOST'],
+        properties: {
+          PORT: { type: 'integer', minimum: 1, maximum: 65535 },
+          HOST: { type: 'string' },
+          NODE_ENV: { type: 'string' }
+        }
+      },
+      data: envConfig
+    });
+
+    // Security plugins
+    await fastify.register(require('@fastify/helmet'), {
+      global: true
+    });
+
+    // CORS configuration
+    await fastify.register(require('@fastify/cors'), {
+      origin: parseCorsOrigins(envConfig.CORS_ORIGIN),
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+      credentials: true
+    });
+
+    // Rate limiting
+    await fastify.register(require('@fastify/rate-limit'), {
+      max: envConfig.RATE_LIMIT_MAX,
+      timeWindow: envConfig.RATE_LIMIT_WINDOW_MS,
+      skipOnError: true
+    });
+
+    // Register custom plugins
+    await fastify.register(require('@/plugins/errorHandler'));
+    await fastify.register(require('@/plugins/websocket'));
+    await fastify.register(require('@/plugins/auth'));
+
+    // Health check endpoint (public)
+    fastify.get('/health', async () => {
+      return createSuccessResponse({
+        status: 'healthy',
+        uptime: process.uptime(),
+        timestamp: Date.now(),
+        version: '1.0.0'
+      });
+    });    // API routes
+    await fastify.register(async function (fastify) {
+      await fastify.register(require('@/routes/ingest'), { prefix: '/ingest' });
+      await fastify.register(require('@/routes/dashboard'), { prefix: '/dashboard' });
+      await fastify.register(require('@/routes/control'), { prefix: '/control' });
+      await fastify.register(require('@/routes/devices'), { prefix: '/devices' });
+      await fastify.register(require('@/routes/notes'), { prefix: '/dashboard/notes' });
+      await fastify.register(require('@/routes/config'), { prefix: '/config' });
+      await fastify.register(require('@/routes/gemini'), { prefix: '/ai' });
+      await fastify.register(require('@/routes/stream'), { prefix: '/stream' });
+    }, { prefix: '/api/v1' });
+
+    // Graceful shutdown
+    const gracefulShutdown = async (signal: string) => {
+      fastify.log.info(`Received ${signal}, shutting down gracefully`);
+      try {
+        await fastify.close();
+        process.exit(0);
+      } catch (error) {
+        fastify.log.error({ error }, 'Error during shutdown');
+        process.exit(1);
+      }
+    };
+
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+    return fastify;
+  } catch (error) {
+    fastify.log.error({ error }, 'Failed to build application');
+    process.exit(1);
+  }
+}
+
+async function start() {
+  let sshClient: any = null;
+  
+  try {
+    // Initialize data service first
+    await dataService.initialize();
+    
+    const app = await buildApp();
+    
+    await app.listen({
+      port: envConfig.PORT,
+      host: envConfig.HOST
+    });
+
+    app.log.info({
+      port: envConfig.PORT,
+      host: envConfig.HOST,
+      environment: envConfig.NODE_ENV
+    }, 'IoT Backend Server started successfully');
+
+    // Initialize SSH reverse tunnel if configured
+    if (process.env.PUBLIC_VPS_IP) {
+      app.log.info('Initializing SSH reverse tunnel...');
+      try {
+        sshClient = createSshTunnel(
+          envConfig.PORT, // Use the server's port as the private server port
+          parseInt(process.env.PUBLIC_PORT || '9001', 10),
+          process.env.SSH_USER || 'user',
+          process.env.PUBLIC_VPS_IP,
+          process.env.SSH_PASSWORD,
+          process.env.SSH_PRIVATE_KEY_PATH,
+          process.env.SSH_PASSPHRASE
+        );
+        
+        if (sshClient) {
+          app.log.info({
+            localPort: envConfig.PORT,
+            remotePort: process.env.PUBLIC_PORT || '9001',
+            vpsIp: process.env.PUBLIC_VPS_IP
+          }, 'SSH reverse tunnel initiated successfully');
+        } else {
+          app.log.warn('SSH reverse tunnel could not be established - check configuration');
+        }
+      } catch (tunnelError) {
+        app.log.error({ error: tunnelError }, 'Failed to initialize SSH tunnel');
+      }
+    } else {
+      app.log.info('SSH tunnel not configured (PUBLIC_VPS_IP not set)');
+    }
+
+    // Update graceful shutdown to include SSH tunnel cleanup
+    const gracefulShutdown = async (signal: string) => {
+      app.log.info(`Received ${signal}, shutting down gracefully`);
+      try {
+        // Close SSH tunnel first
+        if (sshClient) {
+          app.log.info('Closing SSH tunnel...');
+          sshClient.end();
+        }
+        
+        await app.close();
+        process.exit(0);
+      } catch (error) {
+        app.log.error({ error }, 'Error during shutdown');
+        process.exit(1);
+      }
+    };
+
+    // Override the existing signal handlers
+    process.removeAllListeners('SIGTERM');
+    process.removeAllListeners('SIGINT');
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));// Log available routes in development
+    if (envConfig.NODE_ENV === 'development') {
+      app.log.info('Available routes:');
+      app.log.info('  GET    /health');
+      app.log.info('  WS     /ws');
+      app.log.info('  POST   /api/v1/ingest/sensor-data');
+      app.log.info('  GET    /api/v1/ingest/sensor-data/history/:deviceId');
+      app.log.info('  GET    /api/v1/dashboard/data');
+      app.log.info('  GET    /api/v1/dashboard/devices');
+      app.log.info('  GET    /api/v1/dashboard/system-status');
+      app.log.info('  GET    /api/v1/dashboard/notes');
+      app.log.info('  POST   /api/v1/dashboard/notes');
+      app.log.info('  PUT    /api/v1/dashboard/notes/:id');
+      app.log.info('  DELETE /api/v1/dashboard/notes/:id');
+      app.log.info('  POST   /api/v1/control/command');
+      app.log.info('  GET    /api/v1/control/commands/pending');
+      app.log.info('  PUT    /api/v1/control/commands/:id/status');
+      app.log.info('  GET    /api/v1/config/media');
+      app.log.info('  GET    /api/v1/config/system');
+      app.log.info('  POST   /api/v1/stream/stream');
+      app.log.info('  WS     /api/v1/stream/live');
+      app.log.info('  POST   /api/v1/stream/record');
+      app.log.info('  GET    /api/v1/stream/recordings');
+      app.log.info('  GET    /api/v1/stream/status');
+    }
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Start the server
+start();
+
+```
+
+# file: iot-backend/src/services/dataService.ts
+```typescript
+import { promises as fs } from 'fs';
+import path from 'path';
+
+// Device registry interfaces
+export interface DeviceInfo {
+  deviceId: string;
+  deviceName: string;
+  deviceType: 'camera' | 'valve' | 'master';
+  status: 'online' | 'offline' | 'error' | 'maintenance';
+  ipAddress: string;
+  lastHeartbeat: number;
+  uptime: number;
+  freeHeap: number;
+  wifiRssi?: number;
+  errorCount: number;
+  capabilities?: string[];
+}
+
+export interface SystemStatus {
+  devicesOnline: number;
+  devicesTotal: number;
+  systemUptime: number;
+  totalCommandsSent: number;
+  totalCommandsFailed: number;
+  backendConnected: boolean;
+  lastBackendSync: number;
+  systemLoad: number;
+}
+
+class DataService {
+  private dataDir: string;
+  private devicesFile: string;
+  private systemStatusFile: string;
+  private imagesDir: string;
+  private videosDir: string;
+  private recordingsDir: string;
+  
+  private deviceRegistry = new Map<string, DeviceInfo>();
+  private systemStatus: SystemStatus = {
+    devicesOnline: 0,
+    devicesTotal: 0,
+    systemUptime: Date.now(),
+    totalCommandsSent: 0,
+    totalCommandsFailed: 0,
+    backendConnected: true,
+    lastBackendSync: Date.now(),
+    systemLoad: 0
+  };
+
+  constructor() {
+    this.dataDir = path.join(process.cwd(), 'data');
+    this.devicesFile = path.join(this.dataDir, 'devices.json');
+    this.systemStatusFile = path.join(this.dataDir, 'system-status.json');
+    this.imagesDir = path.join(this.dataDir, 'images');
+    this.videosDir = path.join(this.dataDir, 'videos');
+    this.recordingsDir = path.join(this.dataDir, 'recordings');
+  }
+
+  async initialize(): Promise<void> {
+    console.log('🔧 Initializing data service...');
+    
+    try {
+      // Create data directories
+      await this.ensureDirectoryExists(this.dataDir);
+      await this.ensureDirectoryExists(this.imagesDir);
+      await this.ensureDirectoryExists(this.videosDir);
+      await this.ensureDirectoryExists(this.recordingsDir);
+      
+      // Load existing data
+      await this.loadDevices();
+      await this.loadSystemStatus();
+      
+      // Start background tasks
+      this.startStaleDeviceMonitoring();
+      this.startPeriodicSave();
+      
+      console.log('✅ Data service initialized successfully');
+      console.log(`📁 Data directory: ${this.dataDir}`);
+      console.log(`📷 Images directory: ${this.imagesDir}`);
+      console.log(`🎥 Videos directory: ${this.videosDir}`);
+      console.log(`📼 Recordings directory: ${this.recordingsDir}`);
+    } catch (error) {
+      console.error('❌ Failed to initialize data service:', error);
+      throw error;
+    }
+  }
+
+  private async ensureDirectoryExists(dir: string): Promise<void> {
+    try {
+      await fs.access(dir);
+    } catch {
+      await fs.mkdir(dir, { recursive: true });
+      console.log(`📂 Created directory: ${dir}`);
+    }
+  }
+
+  // Device Management
+  async loadDevices(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.devicesFile, 'utf8');
+      const devicesArray = JSON.parse(data) as DeviceInfo[];
+      
+      this.deviceRegistry.clear();
+      devicesArray.forEach(device => {
+        this.deviceRegistry.set(device.deviceId, device);
+      });
+      
+      console.log(`📱 Loaded ${devicesArray.length} devices from storage`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        console.log('📱 No existing devices file found, starting with empty registry');
+      } else {
+        console.error('❌ Error loading devices:', error);
+      }
+    }
+  }
+
+  async saveDevices(): Promise<void> {
+    try {
+      const devicesArray = Array.from(this.deviceRegistry.values());
+      await fs.writeFile(this.devicesFile, JSON.stringify(devicesArray, null, 2));
+      console.log(`💾 Saved ${devicesArray.length} devices to storage`);
+    } catch (error) {
+      console.error('❌ Error saving devices:', error);
+      throw error;
+    }
+  }
+
+  async loadSystemStatus(): Promise<void> {
+    try {
+      const data = await fs.readFile(this.systemStatusFile, 'utf8');
+      const savedStatus = JSON.parse(data) as SystemStatus;
+      
+      // Merge with current status, preserving runtime values
+      this.systemStatus = {
+        ...savedStatus,
+        systemUptime: Date.now(), // Reset uptime
+        backendConnected: true,
+        lastBackendSync: Date.now()
+      };
+      
+      console.log('📊 Loaded system status from storage');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        console.log('📊 No existing system status file found, starting with defaults');
+      } else {
+        console.error('❌ Error loading system status:', error);
+      }
+    }
+  }
+
+  async saveSystemStatus(): Promise<void> {
+    try {
+      await fs.writeFile(this.systemStatusFile, JSON.stringify(this.systemStatus, null, 2));
+    } catch (error) {
+      console.error('❌ Error saving system status:', error);
+    }
+  }
+
+  // Device Registry Operations
+  getDevice(deviceId: string): DeviceInfo | undefined {
+    return this.deviceRegistry.get(deviceId);
+  }
+
+  getAllDevices(): DeviceInfo[] {
+    return Array.from(this.deviceRegistry.values());
+  }
+
+  async setDevice(deviceId: string, device: DeviceInfo): Promise<void> {
+    this.deviceRegistry.set(deviceId, device);
+    await this.saveDevices();
+    this.updateSystemStatus();
+  }
+
+  async deleteDevice(deviceId: string): Promise<boolean> {
+    const deleted = this.deviceRegistry.delete(deviceId);
+    if (deleted) {
+      await this.saveDevices();
+      this.updateSystemStatus();
+    }
+    return deleted;
+  }
+
+  deviceExists(deviceId: string): boolean {
+    return this.deviceRegistry.has(deviceId);
+  }
+
+  // System Status
+  getSystemStatus(): SystemStatus {
+    this.updateSystemStatus();
+    return { ...this.systemStatus };
+  }
+
+  private updateSystemStatus(): void {
+    const devices = Array.from(this.deviceRegistry.values());
+    this.systemStatus.devicesOnline = devices.filter(d => d.status === 'online').length;
+    this.systemStatus.devicesTotal = devices.length;
+    this.systemStatus.lastBackendSync = Date.now();
+  }
+
+  async incrementCommandsSent(): Promise<void> {
+    this.systemStatus.totalCommandsSent++;
+    await this.saveSystemStatus();
+  }
+
+  async incrementCommandsFailed(): Promise<void> {
+    this.systemStatus.totalCommandsFailed++;
+    await this.saveSystemStatus();
+  }
+
+  // File Storage Operations
+  async saveImage(deviceId: string, imageBuffer: Buffer, mimeType: string = 'image/jpeg'): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const extension = mimeType.includes('jpeg') ? 'jpg' : 'png';
+    const filename = `${deviceId}_${timestamp}.${extension}`;
+    const filepath = path.join(this.imagesDir, filename);
+    
+    await fs.writeFile(filepath, imageBuffer);
+    console.log(`📷 Saved image: ${filename} (${imageBuffer.length} bytes)`);
+    
+    return filename;
+  }
+
+  async saveRecording(deviceId: string, frames: Buffer[], recordingId: string): Promise<string> {
+    const recordingDir = path.join(this.recordingsDir, recordingId);
+    await this.ensureDirectoryExists(recordingDir);
+      const manifest = {
+      recordingId,
+      deviceId,
+      timestamp: new Date().toISOString(),
+      frameCount: frames.length,
+      frames: [] as string[]
+    };
+
+    // Save individual frames
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      if (frame) {
+        const frameFilename = `frame_${String(i).padStart(4, '0')}.jpg`;
+        const framePath = path.join(recordingDir, frameFilename);
+        await fs.writeFile(framePath, frame);
+        manifest.frames.push(frameFilename);
+      }
+    }
+
+    // Save manifest
+    const manifestPath = path.join(recordingDir, 'manifest.json');
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+    
+    console.log(`📼 Saved recording: ${recordingId} (${frames.length} frames)`);
+    return recordingId;
+  }
+
+  async getRecordings(): Promise<Array<{ recordingId: string; deviceId: string; timestamp: string; frameCount: number }>> {
+    try {
+      const recordings = [];
+      const recordingDirs = await fs.readdir(this.recordingsDir);
+      
+      for (const dir of recordingDirs) {
+        try {
+          const manifestPath = path.join(this.recordingsDir, dir, 'manifest.json');
+          const manifestData = await fs.readFile(manifestPath, 'utf8');
+          const manifest = JSON.parse(manifestData);
+          
+          recordings.push({
+            recordingId: manifest.recordingId,
+            deviceId: manifest.deviceId,
+            timestamp: manifest.timestamp,
+            frameCount: manifest.frameCount
+          });
+        } catch {
+          // Skip invalid recording directories
+        }
+      }
+      
+      return recordings.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    } catch {
+      return [];
+    }
+  }
+
+  // Auto-registration
+  async autoRegisterDevice(deviceId: string, ipAddress: string): Promise<DeviceInfo> {
+    const device: DeviceInfo = {
+      deviceId,
+      deviceName: `Auto-registered ${deviceId}`,
+      deviceType: 'camera',
+      status: 'online',
+      ipAddress,
+      lastHeartbeat: Date.now(),
+      uptime: 0,
+      freeHeap: 0,
+      errorCount: 0,
+      capabilities: ['streaming', 'auto-registered']
+    };
+    
+    await this.setDevice(deviceId, device);
+    console.log(`🤖 Auto-registered device: ${deviceId} from ${ipAddress}`);
+    
+    return device;
+  }
+
+  // Background Tasks
+  private startStaleDeviceMonitoring(): void {
+    setInterval(async () => {
+      const now = Date.now();
+      const staleThreshold = 2 * 60 * 1000; // 2 minutes
+      let hasChanges = false;
+      
+      for (const [deviceId, device] of this.deviceRegistry.entries()) {
+        if (now - device.lastHeartbeat > staleThreshold && device.status === 'online') {
+          device.status = 'offline';
+          this.deviceRegistry.set(deviceId, device);
+          hasChanges = true;
+          console.log(`⏰ Device ${deviceId} marked as offline due to stale heartbeat`);
+        }
+      }
+      
+      if (hasChanges) {
+        await this.saveDevices();
+        this.updateSystemStatus();
+      }
+    }, 30000); // Check every 30 seconds
+  }
+
+  private startPeriodicSave(): void {
+    // Save system status every 5 minutes
+    setInterval(async () => {
+      await this.saveSystemStatus();
+    }, 5 * 60 * 1000);
+  }
+
+  // Getters for directory paths
+  getDataDir(): string {
+    return this.dataDir;
+  }
+
+  getImagesDir(): string {
+    return this.imagesDir;
+  }
+
+  getVideosDir(): string {
+    return this.videosDir;
+  }
+
+  getRecordingsDir(): string {
+    return this.recordingsDir;
+  }
+}
+
+// Export singleton instance
+export const dataService = new DataService();
+
+```
+
+# file: iot-backend/src/services/geminiService.ts
+```typescript
+import { GoogleGenerativeAI, Part } from '@google/generative-ai';
+import type { 
+  GeminiRequest, 
+  GeminiResponse, 
+  GeminiAnalysisResult, 
+  GeminiFileUpload,
+  SupportedMimeType 
+} from '@/types';
+import { generateId } from '@/utils/helpers';
+
+export class GeminiService {
+  private genAI: GoogleGenerativeAI | null = null;
+  private model: any = null;
+  private readonly supportedFormats: Set<string>;
+  private readonly maxFileSize: number;
+
+  constructor() {
+    this.supportedFormats = new Set(
+      (process.env.GEMINI_SUPPORTED_FORMATS || '').split(',').map(f => f.trim())
+    );
+    this.maxFileSize = this.parseFileSize(process.env.GEMINI_MAX_FILE_SIZE || '50MB');
+    
+    if (process.env.GEMINI_API_KEY) {
+      this.initialize();
+    }
+  }
+
+  private initialize(): void {
+    try {
+      this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+      this.model = this.genAI.getGenerativeModel({ 
+        model: process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest' 
+      });
+    } catch (error) {
+      console.error('Failed to initialize Gemini AI:', error);
+    }
+  }
+
+  private parseFileSize(sizeStr: string): number {
+    const units = { B: 1, KB: 1024, MB: 1024 * 1024, GB: 1024 * 1024 * 1024 };
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)$/i);
+    if (!match) return 50 * 1024 * 1024; // Default 50MB
+    
+    const [, size, unit] = match;
+    return parseFloat(size) * (units[unit.toUpperCase() as keyof typeof units] || 1);
+  }
+
+  public isAvailable(): boolean {
+    return this.genAI !== null && this.model !== null;
+  }
+
+  public validateFile(file: GeminiFileUpload): { valid: boolean; error?: string } {
+    if (!this.supportedFormats.has(file.mimetype)) {
+      return {
+        valid: false,
+        error: `Unsupported file type: ${file.mimetype}. Supported: ${Array.from(this.supportedFormats).join(', ')}`
+      };
+    }
+
+    if (file.size > this.maxFileSize) {
+      return {
+        valid: false,
+        error: `File too large: ${file.size} bytes. Maximum: ${this.maxFileSize} bytes`
+      };
+    }
+
+    return { valid: true };
+  }
+
+  private async convertFileToGenerativePart(file: GeminiFileUpload): Promise<Part> {
+    return {
+      inlineData: {
+        data: file.buffer.toString('base64'),
+        mimeType: file.mimetype as SupportedMimeType
+      }
+    };
+  }
+
+  public async generateResponse(request: GeminiRequest): Promise<GeminiResponse> {
+    if (!this.isAvailable()) {
+      throw new Error('Gemini AI service is not available. Please check your API key configuration.');
+    }
+
+    const startTime = Date.now();
+    const requestId = generateId('gemini');
+
+    try {
+      // Prepare the parts for the request
+      const parts: Part[] = [];
+
+      // Add the text prompt
+      parts.push({ text: request.prompt });
+
+      // Add context if provided
+      if (request.context) {
+        parts.push({ text: `Context: ${request.context}` });
+      }
+
+      // Process files if provided
+      if (request.files && request.files.length > 0) {
+        for (const file of request.files) {
+          const validation = this.validateFile(file);
+          if (!validation.valid) {
+            throw new Error(validation.error);
+          }
+
+          const part = await this.convertFileToGenerativePart(file);
+          parts.push(part);
+        }
+      }
+
+      // Generate content
+      const result = await this.model.generateContent(parts);
+      const response = await result.response;
+      const text = response.text();
+
+      const processingTime = Date.now() - startTime;
+
+      return {
+        id: requestId,
+        response: text,
+        usage: {
+          promptTokens: 0, // Gemini doesn't provide token counts in the same way
+          completionTokens: 0,
+          totalTokens: 0
+        },
+        processingTime,
+        model: process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest',
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+      
+      throw new Error(`Gemini API error (${processingTime}ms): ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  public async analyzeContent(request: GeminiRequest): Promise<GeminiAnalysisResult> {
+    // Enhanced prompt for analysis
+    const analysisPrompt = `
+Please analyze the provided content and respond with a structured analysis in the following JSON format:
+
+{
+  "analysis": "Overall analysis of the content",
+  "insights": ["Key insight 1", "Key insight 2", "..."],
+  "recommendations": ["Recommendation 1", "Recommendation 2", "..."],
+  "confidence": 0.85,
+  "fileAnalysis": {
+    "filename.jpg": {
+      "type": "image",
+      "description": "Description of what's in the image",
+      "features": ["feature1", "feature2"]
+    }
+  }
+}
+
+Original prompt: ${request.prompt}
+`;
+
+    const analysisRequest: GeminiRequest = {
+      ...request,
+      prompt: analysisPrompt
+    };
+
+    const response = await this.generateResponse(analysisRequest);
+
+    try {
+      // Try to parse the response as JSON
+      const parsed = JSON.parse(response.response);
+      return parsed as GeminiAnalysisResult;
+    } catch (error) {
+      // If parsing fails, create a structured response from the text
+      return {
+        analysis: response.response,
+        insights: [],
+        recommendations: [],
+        confidence: 0.7,
+        fileAnalysis: {}
+      };
+    }
+  }
+
+  public async analyzeIoTData(
+    sensorData: any, 
+    files: GeminiFileUpload[] = [],
+    customPrompt?: string
+  ): Promise<GeminiAnalysisResult> {
+    const defaultPrompt = `
+Analyze this IoT sensor data and any provided media files. Look for:
+- Unusual patterns or anomalies
+- Correlations between different sensors
+- Potential issues or maintenance needs
+- Optimization opportunities
+- Safety concerns
+
+Sensor Data: ${JSON.stringify(sensorData, null, 2)}
+
+${customPrompt ? `Additional Context: ${customPrompt}` : ''}
+`;
+
+    return this.analyzeContent({
+      prompt: defaultPrompt,
+      files,
+      context: 'IoT Data Analysis'
+    });
+  }
+
+  public getSupportedFormats(): string[] {
+    return Array.from(this.supportedFormats);
+  }
+
+  public getMaxFileSize(): number {
+    return this.maxFileSize;
+  }
+
+  public getConfiguration() {
+    return {
+      available: this.isAvailable(),
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest',
+      supportedFormats: this.getSupportedFormats(),
+      maxFileSize: this.maxFileSize,
+      maxFileSizeFormatted: this.formatFileSize(this.maxFileSize)
+    };
+  }
+
+  private formatFileSize(bytes: number): string {
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    return `${size.toFixed(unitIndex > 0 ? 1 : 0)}${units[unitIndex]}`;
+  }
+}
+
+// Singleton instance
+export const geminiService = new GeminiService();
+
+```
+
+# file: iot-backend/src/services/index.ts
+```typescript
+export { iotService, IoTService } from './iotService';
+export { geminiService, GeminiService } from './geminiService';
+
+```
+
+# file: iot-backend/src/services/iotService.ts
+```typescript
+import type { SensorData, Device, Command, Note, DashboardData, WebSocketMessage } from '@/types';
+import { dataStore } from '@/models/dataStore';
+import { EventEmitter } from 'events';
+
+export class IoTService extends EventEmitter {
+  private readonly maxDeviceOfflineTime = 5 * 60 * 1000; // 5 minutes
+
+  constructor() {
+    super();
+    // Check for offline devices every minute
+    setInterval(() => this.checkDeviceStatus(), 60000);
+  }
+
+  async processSensorData(data: SensorData): Promise<void> {
+    // Validate data ranges and sanitize
+    const sanitizedData = this.sanitizeSensorData(data);
+    
+    // Save to store
+    await dataStore.saveSensorData(sanitizedData);
+    
+    // Emit real-time update
+    const wsMessage: WebSocketMessage = {
+      type: 'sensor-data',
+      payload: sanitizedData,
+      timestamp: Date.now()
+    };
+    
+    this.emit('websocket-broadcast', wsMessage);
+  }
+
+  async getDashboardData(): Promise<DashboardData> {
+    const [devices, latestSensorData] = await Promise.all([
+      dataStore.getDevices(),
+      dataStore.getLatestSensorData()
+    ]);
+
+    const systemStatus = dataStore.getSystemStats();
+
+    return {
+      devices,
+      latestSensorData,
+      systemStatus: {
+        uptime: systemStatus.uptime,
+        connectedDevices: systemStatus.connectedDevices,
+        lastDataReceived: systemStatus.lastDataReceived
+      }
+    };
+  }
+
+  async getSensorHistory(deviceId: string, limit?: number): Promise<SensorData[]> {
+    return dataStore.getSensorDataHistory(deviceId, limit);
+  }
+
+  async executeCommand(commandData: Omit<Command, 'id' | 'timestamp' | 'status'>): Promise<Command> {
+    const command: Command = {
+      ...commandData,
+      id: this.generateCommandId(),
+      timestamp: Date.now(),
+      status: 'pending'
+    };
+
+    await dataStore.saveCommand(command);
+
+    // Emit command to device via WebSocket
+    const wsMessage: WebSocketMessage = {
+      type: 'command-result',
+      payload: { command, action: 'new-command' },
+      timestamp: Date.now()
+    };
+
+    this.emit('websocket-broadcast', wsMessage);
+    
+    // Simulate command acknowledgment (in real implementation, ESP32 would respond)
+    setTimeout(async () => {
+      await this.updateCommandStatus(command.id, 'acknowledged');
+    }, 1000);
+
+    return command;
+  }
+
+  async updateCommandStatus(commandId: string, status: Command['status']): Promise<void> {
+    await dataStore.updateCommandStatus(commandId, status);
+    
+    const command = await dataStore.getCommand(commandId);
+    if (command) {
+      const wsMessage: WebSocketMessage = {
+        type: 'command-result',
+        payload: { command, action: 'status-update' },
+        timestamp: Date.now()
+      };
+      
+      this.emit('websocket-broadcast', wsMessage);
+    }
+  }
+
+  async getPendingCommands(deviceId?: string): Promise<Command[]> {
+    return dataStore.getPendingCommands(deviceId);
+  }
+
+  async createNote(noteData: Omit<Note, 'id' | 'createdAt' | 'updatedAt'>): Promise<Note> {
+    return dataStore.createNote(noteData);
+  }
+
+  async getNotes(): Promise<Note[]> {
+    return dataStore.getNotes();
+  }
+
+  async updateNote(id: number, updates: Partial<Omit<Note, 'id' | 'createdAt'>>): Promise<Note | null> {
+    return dataStore.updateNote(id, updates);
+  }
+
+  async deleteNote(id: number): Promise<boolean> {
+    return dataStore.deleteNote(id);
+  }
+
+  getMediaConfig() {
+    return {
+      videoStreamUrl: 'http://localhost:8080/stream.mjpg', // Example stream URL
+      imageUrls: [
+        '/api/v1/media/camera/latest.jpg',
+        '/api/v1/media/sensors/graph.png'
+      ],
+      thumbnailUrls: [
+        '/api/v1/media/camera/thumb.jpg'
+      ],
+      refreshInterval: 5000 // 5 seconds
+    };
+  }
+
+  private sanitizeSensorData(data: SensorData): SensorData {
+    const sanitized = { ...data };
+    
+    // Ensure timestamp is current if not provided or invalid
+    if (!sanitized.timestamp || sanitized.timestamp > Date.now() + 60000) {
+      sanitized.timestamp = Date.now();
+    }
+
+    // Validate and clamp sensor values
+    if (typeof sanitized.temperature === 'number') {
+      sanitized.temperature = Math.max(-100, Math.min(100, sanitized.temperature));
+    }
+    
+    if (typeof sanitized.humidity === 'number') {
+      sanitized.humidity = Math.max(0, Math.min(100, sanitized.humidity));
+    }
+    
+    if (typeof sanitized.pressure === 'number') {
+      sanitized.pressure = Math.max(0, sanitized.pressure);
+    }
+    
+    if (typeof sanitized.lightLevel === 'number') {
+      sanitized.lightLevel = Math.max(0, Math.min(100, sanitized.lightLevel));
+    }
+
+    return sanitized;
+  }
+
+  private async checkDeviceStatus(): Promise<void> {
+    const devices = await dataStore.getDevices();
+    const now = Date.now();
+    
+    for (const device of devices) {
+      if (device.status === 'online' && 
+          (now - device.lastSeen) > this.maxDeviceOfflineTime) {
+        
+        await dataStore.updateDeviceStatus(device.id, 'offline');
+        
+        // Emit device status change
+        const wsMessage: WebSocketMessage = {
+          type: 'device-status',
+          payload: { deviceId: device.id, status: 'offline' },
+          timestamp: now
+        };
+        
+        this.emit('websocket-broadcast', wsMessage);
+      }
+    }
+  }
+
+  private generateCommandId(): string {
+    return `cmd_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+
+// Singleton instance
+export const iotService = new IoTService();
+
+```
+
+# file: iot-backend/src/types/index.ts
+```typescript
+export interface SensorData {
+  deviceId: string;
+  timestamp: number;
+  temperature?: number;
+  humidity?: number;
+  pressure?: number;
+  lightLevel?: number;
+  motionDetected?: boolean;
+  airQuality?: number;
+  [key: string]: string | number | boolean | undefined;
+}
+
+export interface Device {
+  id: string;
+  name: string;
+  type: string;
+  status: 'online' | 'offline' | 'error';
+  lastSeen: number;
+  location?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface Command {
+  id: string;
+  deviceId: string;
+  type: string;
+  payload: Record<string, any>;
+  status: 'pending' | 'sent' | 'acknowledged' | 'failed';
+  timestamp: number;
+  userId?: string;
+}
+
+export interface Note {
+  id: number;
+  title: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  userId?: string;
+}
+
+export interface MediaConfig {
+  videoStreamUrl?: string;
+  imageUrls: string[];
+  thumbnailUrls: string[];
+  refreshInterval: number;
+}
+
+export interface DashboardData {
+  devices: Device[];
+  latestSensorData: Record<string, SensorData>;
+  systemStatus: {
+    uptime: number;
+    connectedDevices: number;
+    lastDataReceived: number;
+  };
+}
+
+export interface WebSocketMessage {
+  type: 'sensor-data' | 'device-status' | 'command-result' | 'system-alert';
+  payload: any;
+  timestamp: number;
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  timestamp: number;
+}
+
+export interface EnvironmentConfig {
+  PORT: number;
+  HOST: string;
+  NODE_ENV: string;
+  JWT_SECRET: string;
+  API_KEY: string;
+  CORS_ORIGIN: string;
+  RATE_LIMIT_MAX: number;
+  RATE_LIMIT_WINDOW_MS: number;
+  LOG_LEVEL: string;
+  DATABASE_URL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  GEMINI_MAX_FILE_SIZE?: string;
+  GEMINI_SUPPORTED_FORMATS?: string;
+}
+
+// Gemini AI Types
+export interface GeminiFileUpload {
+  buffer: Buffer;
+  filename: string;
+  mimetype: string;
+  size: number;
+}
+
+export interface GeminiRequest {
+  prompt: string;
+  files?: GeminiFileUpload[];
+  context?: string;
+  temperature?: number;
+  maxTokens?: number;
+  userId?: string;
+}
+
+export interface GeminiResponse {
+  id: string;
+  response: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  processingTime: number;
+  model: string;
+  timestamp: number;
+}
+
+export interface GeminiAnalysisResult {
+  analysis: string;
+  insights: string[];
+  recommendations: string[];
+  confidence: number;
+  fileAnalysis?: {
+    [filename: string]: {
+      type: 'image' | 'video' | 'audio';
+      description: string;
+      features: string[];
+    };
+  };
+}
+
+export type SupportedMimeType = 
+  | 'image/jpeg' 
+  | 'image/png' 
+  | 'image/gif' 
+  | 'image/webp'
+  | 'video/mp4' 
+  | 'video/mov' 
+  | 'video/avi'
+  | 'audio/mp3' 
+  | 'audio/wav' 
+  | 'audio/aac';
+
+```
+
+# file: iot-backend/src/utils/helpers.ts
+```typescript
+import type { ApiResponse } from '@/types';
+
+/**
+ * Create standardized API responses
+ */
+export function createApiResponse<T = any>(
+  success: boolean,
+  data?: T,
+  error?: string
+): ApiResponse<T> {
+  return {
+    success,
+    data,
+    error,
+    timestamp: Date.now()
+  };
+}
+
+/**
+ * Create success response
+ */
+export function createSuccessResponse<T = any>(data?: T): ApiResponse<T> {
+  return createApiResponse(true, data);
+}
+
+/**
+ * Create error response
+ */
+export function createErrorResponse(error: string): ApiResponse {
+  return createApiResponse(false, undefined, error);
+}
+
+/**
+ * Validate required environment variables
+ */
+export function validateEnvironment(): void {
+  const required = ['PORT', 'HOST', 'JWT_SECRET', 'API_KEY'];
+  const missing = required.filter(key => !process.env[key]);
+  
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+}
+
+/**
+ * Parse CORS origins from environment variable
+ */
+export function parseCorsOrigins(corsOrigin: string): string[] {
+  return corsOrigin.split(',').map(origin => origin.trim()).filter(Boolean);
+}
+
+/**
+ * Sanitize device ID for security
+ */
+export function sanitizeDeviceId(deviceId: string): string {
+  return deviceId.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 50);
+}
+
+/**
+ * Generate unique ID
+ */
+export function generateId(prefix = ''): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return prefix ? `${prefix}_${timestamp}_${random}` : `${timestamp}_${random}`;
+}
+
+/**
+ * Validate API key from request headers
+ */
+export function validateApiKey(providedKey: string): boolean {
+  return providedKey === process.env.API_KEY;
+}
+
+/**
+ * Rate limiting key generator for IP-based limiting
+ */
+export function getRateLimitKey(ip: string, endpoint?: string): string {
+  return endpoint ? `${ip}:${endpoint}` : ip;
+}
+
+/**
+ * Safe JSON parsing with error handling
+ */
+export function safeJsonParse<T = any>(jsonString: string): T | null {
+  try {
+    return JSON.parse(jsonString);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Calculate time ago in human readable format
+ */
+export function timeAgo(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  
+  if (days > 0) return `${days} day${days > 1 ? 's' : ''} ago`;
+  if (hours > 0) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  if (minutes > 0) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+  return `${seconds} second${seconds !== 1 ? 's' : ''} ago`;
+}
+
+```
+
+# file: iot-backend/test/helpers.test.ts
+```typescript
+import { test, expect } from 'bun:test';
+import { createSuccessResponse, createErrorResponse, sanitizeDeviceId } from '../src/utils/helpers';
+
+test('createSuccessResponse creates correct format', () => {
+  const response = createSuccessResponse({ test: 'data' });
+  
+  expect(response.success).toBe(true);
+  expect(response.data).toEqual({ test: 'data' });
+  expect(response.timestamp).toBeTypeOf('number');
+  expect(response.error).toBeUndefined();
+});
+
+test('createErrorResponse creates correct format', () => {
+  const response = createErrorResponse('Test error message');
+  
+  expect(response.success).toBe(false);
+  expect(response.error).toBe('Test error message');
+  expect(response.timestamp).toBeTypeOf('number');
+  expect(response.data).toBeUndefined();
+});
+
+test('sanitizeDeviceId removes invalid characters', () => {
+  expect(sanitizeDeviceId('device123')).toBe('device123');
+  expect(sanitizeDeviceId('device-test_01')).toBe('device-test_01');
+  expect(sanitizeDeviceId('device@#$%^&*()')).toBe('device');
+  expect(sanitizeDeviceId('device with spaces')).toBe('devicewithspaces');
+});
+
+test('sanitizeDeviceId limits length', () => {
+  const longId = 'a'.repeat(100);
+  const sanitized = sanitizeDeviceId(longId);
+  expect(sanitized.length).toBeLessThanOrEqual(50);
+});
+
+```
+
+# file: iot-backend/test/integration.test.ts
+```typescript
+import { test, expect, beforeAll, afterAll } from 'bun:test';
+import Fastify from 'fastify';
+import { buildTestApp } from './testUtils';
+
+let app: any;
+
+beforeAll(async () => {
+  app = await buildTestApp();
+  await app.ready();
+});
+
+afterAll(async () => {
+  await app.close();
+});
+
+test('Device Management Integration', async () => {
+  // Test device registration
+  const registerResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/devices/register',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: {
+      deviceId: 'test-camera-01',
+      deviceName: 'Test Camera',
+      deviceType: 'camera',
+      ipAddress: '192.168.1.101',
+      capabilities: ['stream', 'photo', 'record']
+    }
+  });
+
+  expect(registerResponse.statusCode).toBe(200);
+  const registerData = registerResponse.json();
+  expect(registerData.success).toBe(true);
+  expect(registerData.data.deviceId).toBe('test-camera-01');
+
+  // Test device list
+  const listResponse = await app.inject({
+    method: 'GET',
+    url: '/api/v1/devices/devices',
+    headers: {
+      'x-api-key': 'test-api-key'
+    }
+  });
+
+  expect(listResponse.statusCode).toBe(200);
+  const listData = listResponse.json();
+  expect(listData.success).toBe(true);
+  expect(listData.data.devices).toBeInstanceOf(Array);
+  expect(listData.data.devices.length).toBeGreaterThan(0);
+});
+
+test('Command System Integration', async () => {
+  // Register a test valve device first
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/devices/register',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: {
+      deviceId: 'test-valve-01',
+      deviceName: 'Test Valve',
+      deviceType: 'valve',
+      ipAddress: '192.168.1.102'
+    }
+  });
+
+  // Send a command
+  const commandResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/control/command',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: {
+      deviceId: 'test-valve-01',
+      type: 'valve_open',
+      payload: { position: 100 }
+    }
+  });
+
+  expect(commandResponse.statusCode).toBe(200);
+  const commandData = commandResponse.json();
+  expect(commandData.success).toBe(true);
+  expect(commandData.data).toHaveProperty('id');
+  expect(commandData.data.status).toBe('pending');
+
+  // Check pending commands
+  const pendingResponse = await app.inject({
+    method: 'GET',
+    url: '/api/v1/control/commands/pending?deviceId=test-valve-01',
+    headers: {
+      'x-api-key': 'test-api-key'
+    }
+  });
+
+  expect(pendingResponse.statusCode).toBe(200);
+  const pendingData = pendingResponse.json();
+  expect(pendingData.success).toBe(true);
+  expect(pendingData.data.commands).toBeInstanceOf(Array);
+  expect(pendingData.data.commands.length).toBeGreaterThan(0);
+});
+
+test('Sensor Data Ingestion', async () => {
+  const sensorResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/ingest/sensor-data',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: {
+      deviceId: 'test-camera-01',
+      timestamp: Date.now(),
+      temperature: 25.5,
+      humidity: 60.2,
+      freeHeap: 180000,
+      wifiRssi: -45
+    }
+  });
+
+  expect(sensorResponse.statusCode).toBe(200);
+  const sensorData = sensorResponse.json();
+  expect(sensorData.success).toBe(true);
+
+  // Check if data appears in dashboard
+  const dashboardResponse = await app.inject({
+    method: 'GET',
+    url: '/api/v1/dashboard/data',
+    headers: {
+      'x-api-key': 'test-api-key'
+    }
+  });
+
+  expect(dashboardResponse.statusCode).toBe(200);
+  const dashboardData = dashboardResponse.json();
+  expect(dashboardData.success).toBe(true);
+  expect(dashboardData.data).toHaveProperty('devices');
+  expect(dashboardData.data).toHaveProperty('latestSensorData');
+});
+
+test('WebSocket Communication', async () => {
+  const ws = new WebSocket('ws://localhost:3000/ws');
+  
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error('WebSocket connection timeout'));
+    }, 5000);
+
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      ws.close();
+      resolve(true);
+    };
+
+    ws.onerror = (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    };
+  });
+});
+
+test('Stream Endpoint Integration', async () => {
+  const streamResponse = await app.inject({
+    method: 'GET',
+    url: '/api/v1/stream/status',
+    headers: {
+      'x-api-key': 'test-api-key'
+    }
+  });
+
+  expect(streamResponse.statusCode).toBe(200);
+  const streamData = streamResponse.json();
+  expect(streamData.success).toBe(true);
+  expect(streamData.data).toHaveProperty('isStreaming');
+  expect(streamData.data).toHaveProperty('frameRate');
+});
+
+test('Health Check', async () => {
+  const healthResponse = await app.inject({
+    method: 'GET',
+    url: '/health'
+  });
+
+  expect(healthResponse.statusCode).toBe(200);
+  const healthData = healthResponse.json();
+  expect(healthData.success).toBe(true);
+  expect(healthData.data).toHaveProperty('status');
+  expect(healthData.data.status).toBe('healthy');
+});
+
+```
+
+# file: iot-backend/test/testUtils.ts
+```typescript
+import Fastify from 'fastify';
+import { config } from 'dotenv';
+
+// Load test environment
+config({ path: '.env.test' });
+
+export async function buildTestApp() {
+  const fastify = Fastify({
+    logger: false // Disable logging in tests
+  });
+
+  // Test environment configuration
+  const testEnvConfig = {
+    PORT: 3001,
+    HOST: '127.0.0.1',
+    NODE_ENV: 'test',
+    JWT_SECRET: 'test-jwt-secret',
+    API_KEY: 'test-api-key',
+    CORS_ORIGIN: 'http://localhost:3001',
+    RATE_LIMIT_MAX: 1000,
+    RATE_LIMIT_WINDOW_MS: 60000,
+    LOG_LEVEL: 'silent'
+  };
+
+  try {
+    // Register environment plugin
+    await fastify.register(require('@fastify/env'), {
+      schema: {
+        type: 'object',
+        required: ['PORT', 'HOST'],
+        properties: {
+          PORT: { type: 'integer', minimum: 1, maximum: 65535 },
+          HOST: { type: 'string' },
+          NODE_ENV: { type: 'string' }
+        }
+      },
+      data: testEnvConfig
+    });
+
+    // Security plugins
+    await fastify.register(require('@fastify/helmet'), {
+      global: true
+    });
+
+    // CORS configuration
+    await fastify.register(require('@fastify/cors'), {
+      origin: ['http://localhost:3001'],
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+      credentials: true
+    });
+
+    // Multipart support
+    await fastify.register(require('@fastify/multipart'), {
+      limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB
+      }
+    });
+
+    // Rate limiting
+    await fastify.register(require('@fastify/rate-limit'), {
+      max: testEnvConfig.RATE_LIMIT_MAX,
+      timeWindow: testEnvConfig.RATE_LIMIT_WINDOW_MS,
+      skipOnError: true
+    });
+
+    // Register custom plugins
+    await fastify.register(require('../src/plugins/errorHandler'));
+    await fastify.register(require('../src/plugins/websocket'));
+    await fastify.register(require('../src/plugins/auth'));
+
+    // Health check endpoint
+    fastify.get('/health', async () => {
+      return {
+        success: true,
+        data: {
+          status: 'healthy',
+          uptime: process.uptime(),
+          timestamp: Date.now(),
+          version: '1.0.0'
+        },
+        timestamp: Date.now()
+      };
+    });
+
+    // API routes
+    await fastify.register(async function (fastify) {
+      await fastify.register(require('../src/routes/ingest'), { prefix: '/ingest' });
+      await fastify.register(require('../src/routes/dashboard'), { prefix: '/dashboard' });
+      await fastify.register(require('../src/routes/control'), { prefix: '/control' });
+      await fastify.register(require('../src/routes/devices'), { prefix: '/devices' });
+      await fastify.register(require('../src/routes/notes'), { prefix: '/dashboard/notes' });
+      await fastify.register(require('../src/routes/config'), { prefix: '/config' });
+      await fastify.register(require('../src/routes/stream'), { prefix: '/stream' });
+    }, { prefix: '/api/v1' });
+
+    return fastify;
+  } catch (error) {
+    fastify.log.error({ error }, 'Failed to build test application');
+    throw error;
+  }
+}
+
+export function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export function createMockDeviceData(deviceId: string, deviceType: 'camera' | 'valve' | 'master') {
+  const baseData = {
+    deviceId,
+    deviceName: `Test ${deviceType}`,
+    deviceType,
+    ipAddress: '192.168.1.100',
+    timestamp: Date.now(),
+    freeHeap: Math.floor(Math.random() * 200000) + 100000,
+    wifiRssi: Math.floor(Math.random() * 30) - 70
+  };
+
+  switch (deviceType) {
+    case 'camera':
+      return {
+        ...baseData,
+        capabilities: ['stream', 'photo', 'record'],
+        frameRate: 10,
+        resolution: 'VGA'
+      };
+    case 'valve':
+      return {
+        ...baseData,
+        capabilities: ['open', 'close', 'position'],
+        position: Math.floor(Math.random() * 101),
+        isOpen: Math.random() > 0.5
+      };
+    case 'master':
+      return {
+        ...baseData,
+        capabilities: ['coordinate', 'monitor', 'command'],
+        connectedDevices: Math.floor(Math.random() * 5) + 1,
+        systemLoad: Math.floor(Math.random() * 100)
+      };
+    default:
+      return baseData;
+  }
+}
+
+export async function registerTestDevice(app: any, deviceData: any) {
+  return await app.inject({
+    method: 'POST',
+    url: '/api/v1/devices/register',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: deviceData
+  });
+}
+
+export async function sendTestCommand(app: any, deviceId: string, command: string, payload: any = {}) {
+  return await app.inject({
+    method: 'POST',
+    url: '/api/v1/control/command',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': 'test-api-key'
+    },
+    payload: {
+      deviceId,
+      type: command,
+      payload
+    }
+  });
+}
+
+```
+
+# file: iot-backend/tsconfig.json
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "allowUnusedLabels": false,
+    "allowUnreachableCode": false,
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["*"],
+      "@/types/*": ["types/*"],
+      "@/schemas/*": ["schemas/*"],
+      "@/services/*": ["services/*"],
+      "@/models/*": ["models/*"],
+      "@/utils/*": ["utils/*"],
+      "@/routes/*": ["routes/*"],
+      "@/plugins/*": ["plugins/*"]
+    },
+    "types": ["bun-types", "node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}
+
+```

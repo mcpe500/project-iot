@@ -3,8 +3,8 @@
 
 export const ENV_CONFIG = {
   // Development environment (default)
-  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9002',
-  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9002',
+  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9003',
+  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9003',
   API_KEY: process.env.EXPO_PUBLIC_API_KEY || 'dev-api-key-change-in-production',
   
   // Network configuration

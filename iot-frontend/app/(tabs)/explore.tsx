@@ -22,6 +22,7 @@ interface Recording {
   frameCount: number;
   createdAt: string;
   size: number;
+  url: string; // Added url field
 }
 
 export default function RecordingsScreen() {
@@ -38,15 +39,30 @@ export default function RecordingsScreen() {
     try {
       setError(null);
       const response = await axios.get(`${CONFIG.BACKEND_URL}/api/v1/stream/recordings`);
-      
-      if (response.data.success) {
+      console.log({ msg: `Recordings response: ${JSON.stringify(response.data)}` });
+
+      if (response.data && Array.isArray(response.data)) {
+        const transformedRecordings = response.data.map((item: any) => {
+          const timestampMatch = item.filename.match(/_(\d+)\.jpg$/);
+          const timestamp = timestampMatch ? parseInt(timestampMatch[1], 10) : Date.now();
+          return {
+            id: item.filename, // Use filename as id, should be unique
+            name: item.filename,
+            frameCount: 0, // Placeholder
+            createdAt: new Date(timestamp).toISOString(),
+            size: 0, // Placeholder for size, can be fetched if available
+            url: `${CONFIG.BACKEND_URL}${item.url}` // Construct full URL
+          };
+        });
+
         // Sort recordings by creation date (newest first)
-        const sortedRecordings = response.data.data.sort((a: Recording, b: Recording) => 
+        const sortedRecordings = transformedRecordings.sort((a: Recording, b: Recording) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
         setRecordings(sortedRecordings);
       } else {
-        setError('Failed to load recordings');
+        setRecordings([]); // Clear recordings if data is not as expected
+        setError('Failed to load recordings or data is in unexpected format.');
       }
     } catch (error) {
       console.error('Error loading recordings:', error);
@@ -94,6 +110,8 @@ export default function RecordingsScreen() {
     );
   };
 
+  const keyExtractor = (item: Recording) => item.id;
+
   const renderRecordingItem = ({ item }: { item: Recording }) => (
     <TouchableOpacity
       style={styles.recordingItem}
@@ -102,7 +120,7 @@ export default function RecordingsScreen() {
       <View style={styles.recordingIcon}>
         <IconSymbol name="video.fill" size={24} color="#4CAF50" />
       </View>
-      
+
       <View style={styles.recordingInfo}>
         <ThemedText style={styles.recordingName} numberOfLines={1}>
           {item.name}
@@ -180,7 +198,7 @@ export default function RecordingsScreen() {
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#000" />
-      
+
       <View style={styles.header}>
         <ThemedText type="title" style={styles.title}>Recordings</ThemedText>
         <TouchableOpacity
@@ -200,7 +218,7 @@ export default function RecordingsScreen() {
         <FlatList
           data={recordings}
           renderItem={renderRecordingItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor} // Use the defined keyExtractor
           style={styles.list}
           contentContainerStyle={recordings.length === 0 ? styles.emptyList : undefined}
           refreshControl={
