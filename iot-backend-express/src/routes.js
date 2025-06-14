@@ -321,8 +321,6 @@ function setupRoutes(app, dataStore, wss) {
       const videoRecordings = (await Promise.all(videoRecordingsPromises))
         .filter(Boolean)
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      console.log(`Found ${videoRecordings.length} recordings.`);
-      console.log(`Found ${videoRecordings} recordings.`);
       // Respond with the standardized object
       res.json({ success: true, data: videoRecordings });
     } catch (err) {
