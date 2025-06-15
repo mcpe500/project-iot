@@ -7,6 +7,8 @@ import os
 import json
 import time
 import asyncio
+import signal
+import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 import cv2
@@ -16,9 +18,15 @@ import io
 import face_recognition
 import mediapipe as mp
 import logging
+from dotenv import load_dotenv
+from ssh_tunnel import create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance
+
+# Load environment variables
+load_dotenv()
 
 # Setup logging
-logging.basicConfig(level=logging.INFO)
+log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+logging.basicConfig(level=getattr(logging, log_level))
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="IoT Backend GPU Server", version="1.0.0")
@@ -52,9 +60,18 @@ devices = {}
 permitted_face_encodings = []
 permitted_face_names = []
 
-# MediaPipe face detection
-mp_face_detection = mp.solutions.face_detection
-mp_drawing = mp.solutions.drawing_utils
+# MediaPipe face detection (optional, fallback if face_recognition not available)
+try:
+    import mediapipe as mp
+    mp_face_detection = mp.solutions.face_detection
+    mp_drawing = mp.solutions.drawing_utils
+    mediapipe_available = True
+except ImportError:
+    logger.warning("MediaPipe not available")
+    mediapipe_available = False
+
+# SSH Tunnel instance
+ssh_tunnel = None
 
 class DataStore:
     def __init__(self):
@@ -85,14 +102,21 @@ class DataStore:
     
     def get_all_devices(self) -> List[Dict[str, Any]]:
         return list(self.devices.values())
-    
-    def load_permitted_faces(self):
+      def load_permitted_faces(self):
         """Load permitted faces from the permitted_faces directory"""
         global permitted_face_encodings, permitted_face_names
         permitted_face_encodings = []
         permitted_face_names = []
         
         if not PERMITTED_FACES_DIR.exists():
+            return
+        
+        try:
+            import face_recognition
+            face_recognition_available = True
+        except ImportError:
+            logger.warning("face_recognition library not available")
+            face_recognition_available = False
             return
         
         for image_file in PERMITTED_FACES_DIR.glob("*.jpg"):
@@ -110,10 +134,17 @@ class DataStore:
                     logger.warning(f"No face found in {image_file}")
             except Exception as e:
                 logger.error(f"Error loading face from {image_file}: {e}")
-    
-    async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
+      async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
         """Perform face recognition on image bytes"""
         try:
+            # Check if face_recognition library is available
+            try:
+                import face_recognition
+                face_recognition_available = True
+            except ImportError:
+                logger.warning("face_recognition library not available")
+                return {"status": "library_unavailable", "recognizedAs": None}
+            
             # Convert bytes to numpy array
             nparr = np.frombuffer(image_bytes, np.uint8)
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -154,6 +185,41 @@ class DataStore:
 
 # Initialize data store
 data_store = DataStore()
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup"""
+    global ssh_tunnel
+    
+    logger.info("Starting IoT Backend GPU Server...")
+    
+    # Start SSH tunnel if configured
+    public_vps_ip = os.getenv('PUBLIC_VPS_IP')
+    if public_vps_ip:
+        logger.info("Starting SSH reverse tunnel...")
+        try:
+            ssh_tunnel = create_ssh_tunnel()
+            if ssh_tunnel:
+                logger.info("SSH tunnel started successfully")
+            else:
+                logger.warning("Failed to start SSH tunnel")
+        except Exception as e:
+            logger.error(f"Error starting SSH tunnel: {e}")
+    else:
+        logger.info("No PUBLIC_VPS_IP configured, running without tunnel")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global ssh_tunnel
+    
+    logger.info("Shutting down IoT Backend GPU Server...")
+    
+    # Stop SSH tunnel
+    if ssh_tunnel:
+        logger.info("Stopping SSH tunnel...")
+        stop_ssh_tunnel()
+        ssh_tunnel = None
 
 @app.get("/health")
 async def health_check():
@@ -354,7 +420,61 @@ async def get_system_status():
         }
     }
 
+@app.post("/recognize")
+async def recognize_face(
+    file: UploadFile = File(...)
+):
+    """Face recognition endpoint compatible with Node.js backend"""
+    try:
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Read image bytes
+        image_bytes = await file.read()
+        
+        # Perform face recognition
+        recognition_result = await data_store.perform_face_recognition(image_bytes)
+        
+        # Format response to match expected structure
+        if recognition_result["status"] == "permitted_face":
+            return {
+                "status": "success",
+                "recognized_faces": [{
+                    "name": recognition_result["recognizedAs"],
+                    "confidence": recognition_result.get("confidence", 0.8)
+                }],
+                "faces_detected": 1,
+                "processing_time": 0.1
+            }
+        elif recognition_result["status"] == "unknown_face":
+            return {
+                "status": "success",
+                "recognized_faces": [],
+                "faces_detected": 1,
+                "processing_time": 0.1
+            }
+        else:
+            return {
+                "status": "success",
+                "recognized_faces": [],
+                "faces_detected": 0,
+                "processing_time": 0.1
+            }
+        
+    except Exception as e:
+        logger.error(f"Error in face recognition: {e}")
+        raise HTTPException(status_code=500, detail=f"Face recognition failed: {str(e)}")
+
 if __name__ == "__main__":
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down...")
+        stop_ssh_tunnel()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     # Check for GPU availability
     try:
         import torch
@@ -365,11 +485,17 @@ if __name__ == "__main__":
     except ImportError:
         logger.info("PyTorch not available")
     
+    # Get configuration from environment
+    host = os.getenv('HOST', '0.0.0.0')
+    port = int(os.getenv('PORT', '9001'))
+    debug = os.getenv('DEBUG', 'False').lower() == 'true'
+    
     # Start server
+    logger.info(f"Starting server on {host}:{port}")
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=9003,
-        reload=True,
-        log_level="info"
+        host=host,
+        port=port,
+        reload=debug,
+        log_level=os.getenv('LOG_LEVEL', 'info').lower()
     )

@@ -142,6 +142,18 @@ class DataStore {
       const FormData = require('form-data');
       const { default: fetch } = await import('node-fetch');
       
+      // Get Python service URL from environment
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
+      
+      if (!serviceEnabled) {
+        console.log('Python GPU service disabled in configuration');
+        return {
+          status: 'service_disabled',
+          recognizedAs: null
+        };
+      }
+      
       const form = new FormData();
       form.append('file', imageBuffer, {
         filename: 'frame.jpg',
@@ -149,7 +161,7 @@ class DataStore {
       });
       
       // Call Python GPU face recognition service
-      const response = await fetch('http://localhost:8001/recognize', {
+      const response = await fetch(`${pythonServiceUrl}/recognize`, {
         method: 'POST',
         body: form,
         headers: form.getHeaders(),
@@ -209,6 +221,9 @@ class DataStore {
       const FormData = require('form-data');
       const { default: fetch } = await import('node-fetch');
       
+      // Get Python service URL from environment
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      
       const form = new FormData();
       form.append('image', imageBuffer, {
         filename: 'permitted_face.jpg',
@@ -216,7 +231,7 @@ class DataStore {
       });
       form.append('name', subjectName);
       
-      const response = await fetch('http://localhost:9003/api/v1/recognition/add-permitted-face', {
+      const response = await fetch(`${pythonServiceUrl}/api/v1/recognition/add-permitted-face`, {
         method: 'POST',
         body: form,
         headers: form.getHeaders()
