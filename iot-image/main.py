@@ -18,72 +18,85 @@ try:
     import cv2
     cv2_available = True
 except ImportError:
+    cv2 = None # type: ignore
     cv2_available = False
-    # logging.warning("OpenCV (cv2) not available. Image processing features will be limited.") # Logger not yet configured
 
 try:
     import numpy as np
     numpy_available = True
 except ImportError:
+    np = None # type: ignore
     numpy_available = False
-    # logging.warning("NumPy not available. Numerical operations will be limited.")
 
 try:
     import face_recognition
     face_recognition_available = True
 except ImportError:
+    face_recognition = None # type: ignore
     face_recognition_available = False
-    # logging.warning("face_recognition library not available. Face recognition features will be disabled.")
 
 try:
     import mediapipe as mp
-    mp_face_detection = mp.solutions.face_detection
-    mp_drawing = mp.solutions.drawing_utils
-    mediapipe_available = True
+    if mp: # mypy check
+        mp_face_detection = mp.solutions.face_detection
+        mp_drawing = mp.solutions.drawing_utils
+    else:
+        mp_face_detection = None
+        mp_drawing = None
+    mediapipe_available = True if mp else False
 except ImportError:
-    mediapipe_available = False
+    mp = None # type: ignore
     mp_face_detection = None
     mp_drawing = None
-    # logging.warning("MediaPipe not available. MediaPipe specific features will be disabled.")
+    mediapipe_available = False
 
 try:
     import torch
     torch_available = True
 except ImportError:
+    torch = None # type: ignore
     torch_available = False
-    # logging.warning("PyTorch not available. GPU acceleration checks will be skipped.")
 
 try:
     import uvicorn
     uvicorn_available = True
 except ImportError:
+    uvicorn = None # type: ignore
     uvicorn_available = False
-    # logging.warning("Uvicorn not available. The server cannot be started directly with this script.")
 
-
-from ssh_tunnel import create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance
+# Ensure ssh_tunnel is importable, handle if not
+try:
+    from ssh_tunnel import create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance
+    ssh_tunnel_available = True
+except ImportError:
+    create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance = None, None, None # type: ignore
+    ssh_tunnel_available = False
 
 # Load environment variables
 load_dotenv()
 
 # Setup logging
-log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
 # Ensure basicConfig is called only once
 if not logging.getLogger().hasHandlers():
-    logging.basicConfig(level=getattr(logging, log_level, logging.INFO),
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(
+        level=getattr(logging, log_level_name, logging.INFO),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(module)s:%(lineno)d - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
-# Log availability of optional dependencies
+logger.info(f"Logging initialized with level: {log_level_name}")
 logger.info(f"OpenCV (cv2) available: {cv2_available}")
-logger.info(f"NumPy available: {numpy_available}")
+logger.info(f"NumPy (np) available: {numpy_available}")
 logger.info(f"face_recognition available: {face_recognition_available}")
-logger.info(f"MediaPipe available: {mediapipe_available}")
-logger.info(f"PyTorch available: {torch_available}")
+logger.info(f"MediaPipe (mp) available: {mediapipe_available}")
+logger.info(f"PyTorch (torch) available: {torch_available}")
 logger.info(f"Uvicorn available: {uvicorn_available}")
+logger.info(f"SSH Tunnel utilities available: {ssh_tunnel_available}")
 
 
 app = FastAPI(title="IoT Backend GPU Server", version="1.0.0")
+app.state.start_time = time.time() # Record start time for uptime calculation
 
 # CORS middleware
 app.add_middleware(
@@ -97,10 +110,10 @@ app.add_middleware(
 # Global Exception Handler to catch any unhandled errors
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception for request {request.url.path}: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception for request {request.url.path}: {type(exc).__name__} - {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"status": "error", "message": "Internal server error", "detail": str(exc)},
+        content={"status": "error", "message": "Internal server error", "detail": f"{type(exc).__name__}: {str(exc)}"},
     )
 
 # Setup directories
@@ -112,10 +125,11 @@ PERMITTED_FACES_DIR = BASE_DIR / "permitted_faces"
 # Create directories if they don't exist
 for directory in [DATA_DIR, RECORDINGS_DIR, PERMITTED_FACES_DIR]:
     try:
-        directory.mkdir(parents=True, exist_ok=True) # Added parents=True
+        Path(directory).mkdir(parents=True, exist_ok=True) # Ensure Path object is used
         logger.info(f"Ensured directory exists: {directory}")
     except Exception as e:
-        logger.error(f"Could not create directory {directory}: {e}", exc_info=True)
+        logger.error(f"Could not create or verify directory {directory}: {e}", exc_info=True)
+        # Depending on severity, you might want to exit or raise a more specific error
 
 
 # Mount static files
@@ -132,35 +146,46 @@ devices = {} # This global 'devices' might conflict with DataStore's self.device
              # For now, keeping as is from original code, but review if DataStore should be sole owner.
 
 # SSH Tunnel instance
-ssh_tunnel_instance = None # Renamed from ssh_tunnel to avoid conflict with module
+ssh_tunnel_instance = None
 
 class DataStore:
     def __init__(self):
-        self.devices = {} # Device storage specific to DataStore instance
+        self.devices: Dict[str, Dict[str, Any]] = {}
         self.permitted_face_encodings: List[Any] = []
         self.permitted_face_names: List[str] = []
-        self.load_permitted_faces()
+        logger.info("DataStore initializing...")
+        try:
+            self.load_permitted_faces()
+        except Exception as e:
+            logger.error(f"Failed to load permitted faces during DataStore initialization: {e}", exc_info=True)
+        logger.info("DataStore initialized.")
     
     def register_device(self, device_data: Dict[str, Any]) -> Dict[str, Any]:
         device_id = device_data.get('id') or device_data.get('deviceId')
         if not device_id:
             logger.error("Device registration attempt with no ID.")
-            raise ValueError("Device ID is required for registration.") # This will be caught by global handler
+            # This will be caught by the global handler if raised from an endpoint
+            raise ValueError("Device ID is required for registration.")
         
         logger.info(f"Registering or updating device: {device_id}")
-        existing_device = self.devices.get(device_id)
-        if existing_device:
-            existing_device.update(device_data)
-            existing_device['lastSeen'] = time.time() * 1000
-            logger.info(f"Updated existing device: {device_id}")
-        else:
-            device_data['lastSeen'] = time.time() * 1000
-            device_data['status'] = device_data.get('status', 'online')
-            device_data['errors'] = device_data.get('errors', 0)
-            self.devices[device_id] = device_data
-            logger.info(f"Registered new device: {device_id}")
-        
-        return self.devices[device_id]
+        try:
+            existing_device = self.devices.get(device_id)
+            current_time_ms = time.time() * 1000
+            if existing_device:
+                existing_device.update(device_data)
+                existing_device['lastSeen'] = current_time_ms
+                logger.info(f"Updated existing device: {device_id}")
+            else:
+                device_data['lastSeen'] = current_time_ms
+                device_data['status'] = device_data.get('status', 'online')
+                device_data['errors'] = device_data.get('errors', 0)
+                self.devices[device_id] = device_data
+                logger.info(f"Registered new device: {device_id}")
+            return self.devices[device_id]
+        except Exception as e:
+            logger.error(f"Error during device registration/update for {device_id}: {e}", exc_info=True)
+            # Re-raise to be handled by endpoint or global handler
+            raise
     
     def get_device(self, device_id: str) -> Optional[Dict[str, Any]]:
         logger.debug(f"Fetching device: {device_id}")
@@ -172,105 +197,135 @@ class DataStore:
     
     def load_permitted_faces(self):
         """Load permitted faces from the permitted_faces directory"""
-        logger.info("Loading permitted faces...")
+        logger.info("Attempting to load permitted faces...")
         self.permitted_face_encodings = []
         self.permitted_face_names = []
         
         if not face_recognition_available:
             logger.warning("face_recognition library not available. Cannot load permitted faces.")
             return
-        if not cv2_available or not numpy_available:
-            logger.warning("cv2 or numpy not available. Cannot load permitted faces.")
+        if not cv2_available:
+            logger.warning("OpenCV (cv2) not available. Cannot load permitted faces.")
+            return
+        if not numpy_available:
+            logger.warning("NumPy (np) not available. Cannot load permitted faces.")
             return
 
         if not PERMITTED_FACES_DIR.exists():
-            logger.warning(f"Permitted faces directory {PERMITTED_FACES_DIR} does not exist.")
+            logger.warning(f"Permitted faces directory {PERMITTED_FACES_DIR} does not exist. Cannot load faces.")
             return
         
         loaded_count = 0
-        for image_file in PERMITTED_FACES_DIR.glob("*.[jp][pn]g"): # jpg, jpeg, png
+        logger.info(f"Scanning {PERMITTED_FACES_DIR} for permitted faces (jpg, jpeg, png)...")
+        for image_file_path in PERMITTED_FACES_DIR.glob("*.[jp][pn]g"):
             try:
-                logger.debug(f"Attempting to load permitted face from {image_file.name}")
-                # Load image using face_recognition's loader
-                image = face_recognition.load_image_file(str(image_file))
+                logger.debug(f"Processing permitted face image: {image_file_path.name}")
                 
+                # Load image using face_recognition's loader (which uses Pillow)
+                logger.debug(f"Loading image file: {image_file_path}")
+                image_array = face_recognition.load_image_file(str(image_file_path))
+                logger.debug(f"Image {image_file_path.name} loaded successfully, shape: {image_array.shape if hasattr(image_array, 'shape') else 'N/A'}")
+
                 # Get face encodings for all faces in the image
                 # We'll take the first one found, assuming one person per image for permitted faces.
-                encodings = face_recognition.face_encodings(image)
+                logger.debug(f"Encoding face(s) in {image_file_path.name}...")
+                encodings = face_recognition.face_encodings(image_array)
                 
                 if encodings:
                     self.permitted_face_encodings.append(encodings[0])
-                    self.permitted_face_names.append(image_file.stem) # Use filename (without ext) as name
+                    self.permitted_face_names.append(image_file_path.stem) # Use filename (without ext) as name
                     loaded_count += 1
-                    logger.info(f"Successfully loaded face: {image_file.stem}")
+                    logger.info(f"Successfully loaded and encoded face: {image_file_path.stem}")
                 else:
-                    logger.warning(f"No face found in permitted image: {image_file.name}")
+                    logger.warning(f"No face found in permitted image: {image_file_path.name}")
             except Exception as e:
-                logger.error(f"Error loading permitted face {image_file.name}: {e}", exc_info=True)
-        logger.info(f"Finished loading permitted faces. Total loaded: {loaded_count}")
+                logger.error(f"Error loading or encoding permitted face {image_file_path.name}: {e}", exc_info=True)
+        logger.info(f"Finished loading permitted faces. Total loaded: {loaded_count}. Total in memory: {len(self.permitted_face_encodings)}")
     
     async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
         """Perform face recognition on image bytes"""
-        logger.info("Attempting face recognition...")
+        logger.info("Initiating face recognition process...")
         
         if not face_recognition_available:
-            logger.warning("face_recognition library not available. Skipping recognition.")
+            logger.warning("face_recognition library not available. Recognition cannot proceed.")
             return {"status": "recognition_disabled", "recognizedAs": None, "error": "Face recognition library not available."}
-        if not cv2_available or not numpy_available:
-            logger.warning("cv2 or numpy not available. Skipping recognition.")
-            return {"status": "recognition_disabled", "recognizedAs": None, "error": "cv2 or numpy not available."}
+        if not cv2_available:
+            logger.warning("OpenCV (cv2) not available. Recognition cannot proceed.")
+            return {"status": "recognition_disabled", "recognizedAs": None, "error": "OpenCV (cv2) not available."}
+        if not numpy_available:
+            logger.warning("NumPy (np) not available. Recognition cannot proceed.")
+            return {"status": "recognition_disabled", "recognizedAs": None, "error": "NumPy (np) not available."}
 
         try:
+            logger.debug("Converting image bytes to NumPy array...")
             nparr = np.frombuffer(image_bytes, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if image is None:
-                logger.error("Failed to decode image from bytes.")
-                return {"status": "image_decode_error", "recognizedAs": None, "error": "Failed to decode image"}
+            logger.debug(f"NumPy array created from buffer, shape: {nparr.shape}")
 
-            # Convert BGR to RGB (face_recognition expects RGB)
-            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            logger.debug("Decoding NumPy array to OpenCV image...")
+            image_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            logger.info("Detecting face locations...")
-            face_locations = face_recognition.face_locations(rgb_image) # model="hog" is faster, "cnn" is more accurate
-            logger.info(f"Found {len(face_locations)} face(s).")
+            if image_bgr is None:
+                logger.error("Failed to decode image from bytes (cv2.imdecode returned None).")
+                return {"status": "image_decode_error", "recognizedAs": None, "error": "Failed to decode image. Image might be corrupt or in an unsupported format."}
+            logger.debug(f"Image decoded successfully (BGR), shape: {image_bgr.shape}")
+
+            logger.debug("Converting BGR image to RGB...")
+            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+            logger.debug(f"Image converted to RGB, shape: {image_rgb.shape}")
+            
+            logger.info("Detecting face locations in RGB image...")
+            # model=\"hog\" is faster, \"cnn\" is more accurate but requires dlib with CUDA compiled for GPU.
+            # Using default (hog) for broader compatibility unless CNN is explicitly needed and configured.
+            face_locations = face_recognition.face_locations(image_rgb) 
+            logger.info(f"Found {len(face_locations)} face(s) at locations: {face_locations}")
             
             if not face_locations:
                 logger.info("No faces detected in the image.")
                 return {"status": "no_face_detected", "recognizedAs": None, "faces_detected": 0}
             
             logger.info("Encoding detected faces...")
-            unknown_face_encodings = face_recognition.face_encodings(rgb_image, known_face_locations=face_locations)
+            unknown_face_encodings = face_recognition.face_encodings(image_rgb, known_face_locations=face_locations)
+            logger.debug(f"Generated {len(unknown_face_encodings)} encodings for detected faces.")
             
             if not self.permitted_face_encodings:
                 logger.warning("No permitted faces loaded for comparison. All detected faces will be 'unknown'.")
                 return {"status": "unknown_face", "recognizedAs": None, "faces_detected": len(face_locations), "detail": "No permitted faces loaded for comparison."}
+            logger.debug(f"Comparing against {len(self.permitted_face_encodings)} permitted face(s).")
 
             for i, unknown_face_encoding in enumerate(unknown_face_encodings):
                 logger.debug(f"Comparing detected face #{i+1} against permitted faces.")
-                matches = face_recognition.compare_faces(self.permitted_face_encodings, unknown_face_encoding, tolerance=0.6)
-                name = "Unknown"
-                confidence = None
-
-                face_distances = face_recognition.face_distance(self.permitted_face_encodings, unknown_face_encoding)
                 
-                if len(face_distances) > 0:
+                # Perform comparison
+                matches = face_recognition.compare_faces(self.permitted_face_encodings, unknown_face_encoding, tolerance=0.6)
+                logger.debug(f"Matches for face #{i+1}: {matches}")
+
+                # Get distances for confidence scoring
+                face_distances = face_recognition.face_distance(self.permitted_face_encodings, unknown_face_encoding)
+                logger.debug(f"Distances for face #{i+1}: {face_distances}")
+                
+                name = "Unknown"
+                confidence = None # type: Optional[float]
+
+                if len(face_distances) > 0: # Should always be true if permitted_face_encodings is not empty
                     best_match_index = np.argmin(face_distances)
+                    logger.debug(f"Best match index for face #{i+1}: {best_match_index}, distance: {face_distances[best_match_index]}")
                     if matches[best_match_index]:
                         name = self.permitted_face_names[best_match_index]
                         # Convert distance to a pseudo-confidence score (0-100, higher is better)
-                        # Lower distance means more similar. (1 - distance) makes it higher for better matches.
-                        confidence = round((1 - float(face_distances[best_match_index])) * 100, 2)
-                        logger.info(f"Permitted face matched: {name} with distance: {face_distances[best_match_index]:.2f} (Confidence: {confidence}%)")
+                        confidence = round((1.0 - float(face_distances[best_match_index])) * 100, 2)
+                        logger.info(f"Permitted face matched: {name} with distance: {face_distances[best_match_index]:.4f} (Confidence: {confidence}%) for detected face #{i+1}.")
                         # Return first permitted match found
                         return {"status": "permitted_face", "recognizedAs": name, "confidence": confidence, "faces_detected": len(face_locations)}
             
-            logger.info("No permitted face matched among detected faces. All are unknown.")
+            logger.info("No permitted face matched among detected faces after checking all. All are unknown.")
             return {"status": "unknown_face", "recognizedAs": None, "faces_detected": len(face_locations)}
             
+        except cv2.error as cv2_err: # Specific OpenCV errors
+             logger.error(f"OpenCV error during face recognition: {cv2_err}", exc_info=True)
+             return {"status": "recognition_error", "recognizedAs": None, "error": f"OpenCV error: {str(cv2_err)}"}
         except Exception as e:
-            logger.error(f"Critical error in face recognition process: {e}", exc_info=True)
-            return {"status": "recognition_error", "recognizedAs": None, "error": f"Internal server error during recognition: {str(e)}"}
+            logger.error(f"Critical error in face recognition process: {type(e).__name__} - {e}", exc_info=True)
+            return {"status": "recognition_error", "recognizedAs": None, "error": f"Internal server error during recognition: {type(e).__name__} - {str(e)}"}
 
 # Initialize data store
 data_store = DataStore()
@@ -278,49 +333,76 @@ data_store = DataStore()
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup"""
-    global ssh_tunnel_instance # Use the renamed global variable
+    global ssh_tunnel_instance
     
-    logger.info("Starting IoT Backend GPU Server...")
-    data_store.load_permitted_faces() # Load faces on startup
+    app.state.start_time = time.time() # Ensure start_time is set
+    logger.info(f"Executing startup_event. App start time set to: {app.state.start_time}")
     
-    public_vps_ip = os.getenv('PUBLIC_VPS_IP')
-    if public_vps_ip:
-        logger.info(f"Attempting to start SSH reverse tunnel to {public_vps_ip}...")
-        try:
-            ssh_tunnel_instance = create_ssh_tunnel() # Assuming create_ssh_tunnel handles its config from env
-            if ssh_tunnel_instance and get_tunnel_instance() and get_tunnel_instance().is_active: # Check if tunnel is active
-                 logger.info("SSH reverse tunnel started successfully.")
-            else:
-                 logger.warning("SSH tunnel object created, but it might not be active. Check tunnel logs/status.")
-        except Exception as e:
-            logger.error(f"Failed to start SSH tunnel: {e}", exc_info=True)
+    logger.info("IoT Backend GPU Server starting up...")
+    try:
+        data_store.load_permitted_faces() # Reload faces on startup, in case new files were added manually
+    except Exception as e:
+        logger.error(f"Error during startup face loading: {e}", exc_info=True)
+
+    if ssh_tunnel_available and create_ssh_tunnel and stop_ssh_tunnel and get_tunnel_instance : # Check if functions are not None
+        public_vps_ip = os.getenv('PUBLIC_VPS_IP')
+        if public_vps_ip:
+            logger.info(f"Attempting to start SSH reverse tunnel to {public_vps_ip}...")
+            try:
+                ssh_tunnel_instance = create_ssh_tunnel()
+                if ssh_tunnel_instance and get_tunnel_instance() and get_tunnel_instance().is_active:
+                    logger.info("SSH reverse tunnel started successfully and is active.")
+                elif ssh_tunnel_instance:
+                    logger.warning("SSH tunnel object created, but it might not be active. Check tunnel logs/status.")
+                else:
+                    logger.warning("create_ssh_tunnel() did not return an active tunnel instance.")
+            except Exception as e:
+                logger.error(f"Failed to start or verify SSH tunnel: {e}", exc_info=True)
+        else:
+            logger.info("No PUBLIC_VPS_IP configured in .env, running without SSH tunnel.")
     else:
-        logger.info("No PUBLIC_VPS_IP configured in .env, running without SSH tunnel.")
+        logger.warning("SSH tunnel utilities are not available. Cannot start tunnel.")
+    logger.info("Startup event completed.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
     global ssh_tunnel_instance
     
-    logger.info("Shutting down IoT Backend GPU Server...")
+    logger.info("Executing shutdown_event. IoT Backend GPU Server shutting down...")
     
-    if ssh_tunnel_instance:
+    if ssh_tunnel_available and stop_ssh_tunnel and ssh_tunnel_instance:
         logger.info("Stopping SSH tunnel...")
         try:
-            stop_ssh_tunnel() # Assuming this stops the tunnel started by create_ssh_tunnel
-            ssh_tunnel_instance = None
-            logger.info("SSH tunnel stopped.")
+            stop_ssh_tunnel()
+            ssh_tunnel_instance = None # Clear the instance
+            logger.info("SSH tunnel stopped successfully.")
         except Exception as e:
             logger.error(f"Error stopping SSH tunnel: {e}", exc_info=True)
-
+    elif ssh_tunnel_instance:
+        logger.warning("SSH tunnel instance exists, but stop_ssh_tunnel utility is not available.")
+    else:
+        logger.info("No active SSH tunnel instance to stop or utilities not available.")
+    logger.info("Shutdown event completed.")
 
 @app.get("/health")
 async def health_check():
-    logger.info("Health check requested.")
-    current_uptime = -1
-    if hasattr(app.state, 'start_time') and app.state.start_time:
-        current_uptime = int(time.time() - app.state.start_time)
-    return {"status": "healthy", "uptime_seconds": current_uptime , "timestamp_ms": int(time.time() * 1000)}
+    logger.debug("Health check endpoint requested.")
+    current_uptime_seconds = -1.0
+    if hasattr(app.state, 'start_time') and app.state.start_time is not None:
+        current_uptime_seconds = round(time.time() - app.state.start_time, 2)
+    
+    health_status = {
+        "status": "healthy", 
+        "uptime_seconds": current_uptime_seconds, 
+        "timestamp_ms": int(time.time() * 1000),
+        "face_recognition_available": face_recognition_available,
+        "cv2_available": cv2_available,
+        "numpy_available": numpy_available,
+        "ssh_tunnel_active": ssh_tunnel_instance.is_active if ssh_tunnel_instance and hasattr(ssh_tunnel_instance, 'is_active') else False
+    }
+    logger.debug(f"Health status: {health_status}")
+    return JSONResponse(content=health_status)
 
 
 @app.post("/api/v1/devices/register")
@@ -512,32 +594,37 @@ async def add_permitted_face(
         raise HTTPException(status_code=500, detail=f"Internal server error adding face: {str(e)}")
 
 @app.get("/api/v1/system/status")
-async def get_system_status_endpoint(): # Renamed
-    logger.info("Request for system status.")
+async def get_system_status_endpoint(): # Renamed from get_system_status
+    logger.debug("System status endpoint requested.")
     try:
         devices_list = data_store.get_all_devices()
-        online_devices_count = len([d for d in devices_list if d.get('status', 'offline').lower() in ['online', 'warning']])
+        online_devices = [d for d in devices_list if d.get('status') in ['online', 'warning']]
         
-        # Calculate uptime
-        current_uptime = -1
-        if hasattr(app.state, 'start_time') and app.state.start_time:
-            current_uptime = int(time.time() - app.state.start_time)
+        current_uptime_seconds = -1.0
+        if hasattr(app.state, 'start_time') and app.state.start_time is not None:
+            current_uptime_seconds = round(time.time() - app.state.start_time, 2)
 
-        status_data = {
-            "devicesOnline": online_devices_count,
-            "devicesTotal": len(devices_list),
-            "systemUptimeSeconds": current_uptime,
-            # "totalCommandsSent": 0, # These would need actual tracking
-            # "totalCommandsFailed": 0,
-            "backendConnected": True, # Assuming this service is the backend
-            "lastBackendSyncMs": int(time.time() * 1000), # Or a more meaningful sync time
-            # "systemLoad": psutil.cpu_percent() if 'psutil' in sys.modules else -1 # Example, requires psutil
+        status_payload = {
+            "success": True,
+            "status": {
+                "devicesOnline": len(online_devices),
+                "devicesTotal": len(devices_list),
+                "systemUptimeSeconds": current_uptime_seconds,
+                "faceRecognitionService": {
+                    "status": "operational" if face_recognition_available else "degraded",
+                    "permitted_faces_loaded": len(data_store.permitted_face_encodings)
+                },
+                "lastBackendSync": int(time.time() * 1000), # Placeholder, consider actual sync time if applicable
+                "systemLoad": "N/A", # Placeholder, consider using psutil if needed
+                "ssh_tunnel_active": ssh_tunnel_instance.is_active if ssh_tunnel_instance and hasattr(ssh_tunnel_instance, 'is_active') else False
+            }
         }
-        return JSONResponse(content={"success": True, "status": status_data})
+        logger.debug(f"System status: {status_payload}")
+        return JSONResponse(content=status_payload)
     except Exception as e:
-        logger.error(f"Error getting system status: {e}", exc_info=True)
-        raise # Re-raise to be caught by global handler
-
+        logger.error(f"Error retrieving system status: {e}", exc_info=True)
+        # Let global handler manage this
+        raise
 
 @app.post("/recognize")
 async def recognize_face_endpoint( # Renamed
@@ -579,21 +666,22 @@ if __name__ == "__main__":
     # Setup signal handlers for graceful shutdown
     def signal_handler(signum, frame):
         logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-        # Perform any app-specific cleanup before stopping the tunnel
-        # (e.g., wait for ongoing requests, close database connections)
+        # FastAPI/Uvicorn handles its own shutdown gracefully on SIGINT/SIGTERM.
+        # Custom logic here might be for stopping other services before uvicorn exits.
+        # The app.on_event(\"shutdown\") handler is preferred for FastAPI specific cleanup.
         
-        # Stop SSH tunnel if it's running
-        global ssh_tunnel_instance
-        if ssh_tunnel_instance: # Check if the tunnel object exists
-            logger.info("Attempting to stop SSH tunnel...")
-            try:
-                stop_ssh_tunnel() # Call the function from ssh_tunnel.py
-                logger.info("SSH tunnel stop command issued.")
-            except Exception as e:
-                logger.error(f"Error during SSH tunnel stop: {e}", exc_info=True)
+        # If there's a need to explicitly stop the tunnel here (e.g. if on_event isn't always triggered)
+        # global ssh_tunnel_instance
+        # if ssh_tunnel_available and stop_ssh_tunnel and ssh_tunnel_instance:
+        #     logger.info(\"Signal handler: Attempting to stop SSH tunnel...\")
+        #     try:
+        #         stop_ssh_tunnel()
+        #         logger.info(\"Signal handler: SSH tunnel stop command issued.\")
+        #     except Exception as e:
+        #         logger.error(f\"Signal handler: Error during SSH tunnel stop: {e}\", exc_info=True)
         
-        logger.info("Exiting application.")
-        sys.exit(0) # Exit gracefully
+        logger.info("Signal handler: Exiting application process.")
+        sys.exit(0) # This will trigger uvicorn's shutdown
     
     signal.signal(signal.SIGINT, signal_handler) # Handle Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler) # Handle kill/system shutdown
@@ -613,16 +701,21 @@ if __name__ == "__main__":
     # Get configuration from environment
     host = os.getenv('HOST', '0.0.0.0')
     port = int(os.getenv('PORT', '9001')) # Default to 9001 for the Python service
-    reload_debug = os.getenv('DEBUG', 'False').lower() == 'true' # For uvicorn's reload
-    log_level_uvicorn = os.getenv('LOG_LEVEL', 'info').lower() # For uvicorn's own logging
+    reload_debug = os.getenv('RELOAD_DEBUG', 'False').lower() == 'true' # Changed env var name for clarity
+    log_level_uvicorn = os.getenv('UVICORN_LOG_LEVEL', 'info').lower() # Changed env var name
 
-    logger.info(f"Starting Uvicorn server on {host}:{port}. Reload: {reload_debug}. Log Level: {log_level_uvicorn}")
+    logger.info(f"Starting Uvicorn server on {host}:{port}. Reload: {reload_debug}. Uvicorn Log Level: {log_level_uvicorn}")
     
-    uvicorn.run(
-        "main:app", # app is instance of FastAPI in main.py
-        host=host,
-        port=port,
-        reload=reload_debug,
-        log_level=log_level_uvicorn
-        # workers=int(os.getenv('WEB_CONCURRENCY', 1)) # For production, consider multiple workers
-    )
+    # Ensure uvicorn is not None before calling
+    if uvicorn:
+        uvicorn.run(
+            "main:app",
+            host=host,
+            port=port,
+            reload=reload_debug,
+            log_level=log_level_uvicorn
+            # workers=1 # Consider number of workers for production
+        )
+    else:
+        logger.critical("Uvicorn is None, cannot start server.")
+        sys.exit(1)
