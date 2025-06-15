@@ -86,6 +86,11 @@ const char* DEVICE_NAME = "Camera #1";
 #define FAILURE_LOG_INTERVAL 5
 #define WIFI_STATUS_LOG_INTERVAL 50
 
+// Enhanced debugging options
+#define DEBUG_HTTP_RESPONSES true
+#define DEBUG_PAYLOAD_SIZE true
+#define TEST_SERVER_CONNECTIVITY true
+
 // ===========================
 // Memory Optimization
 // ===========================

@@ -40,6 +40,10 @@ bool sendFrameToServer(camera_fb_t* fb);
 bool registerDevice();
 bool sendHeartbeat();
 
+// Network Testing
+bool testServerConnectivity();
+bool testSimpleUpload();
+
 // ===========================
 // WiFi Management Functions
 // ===========================
@@ -259,8 +263,7 @@ bool sendFrameToServer(camera_fb_t* fb) {
   String footer = "\r\n--" + boundary + "--\r\n";
   
   size_t totalLength = header.length() + fb->len + footer.length();
-  
-  // Try complete payload method first
+    // Try complete payload method first
   uint8_t* payload = (uint8_t*)malloc(totalLength);
   if (payload) {
     memcpy(payload, header.c_str(), header.length());
@@ -271,18 +274,28 @@ bool sendFrameToServer(camera_fb_t* fb) {
     int httpCode = http.POST(payload, totalLength);
     free(payload);
     
-    bool result = (httpCode == 200);
-    if (!result && frameCount % FAILURE_LOG_INTERVAL == 0) {
-      Serial.printf("HTTP Error: %d\n", httpCode);
+    // Enhanced error reporting
+    Serial.printf("HTTP Response Code: %d\n", httpCode);
+    if (httpCode > 0) {
+      String response = http.getString();
+      if (httpCode != 200) {
+        Serial.printf("HTTP Error Details: %s\n", response.c_str());
+      }
+    } else {
+      Serial.printf("HTTP Request Failed: %s\n", http.errorToString(httpCode).c_str());
     }
+    
+    bool result = (httpCode == 200);
     http.end();
-    return result;
-  } else {
+    return result;  } else {
     // Fallback to streaming method
+    Serial.println("Using streaming method (memory allocation failed)");
     http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
     http.addHeader("Content-Length", String(totalLength));
     
     int httpCode = http.sendRequest("POST", (uint8_t*)NULL, 0);
+    Serial.printf("Stream HTTP Response Code: %d\n", httpCode);
+    
     if (httpCode > 0) {
       WiFiClient* stream = http.getStreamPtr();
       if (stream) {
@@ -292,17 +305,29 @@ bool sendFrameToServer(camera_fb_t* fb) {
         while (bytesWritten < fb->len) {
           size_t bytesToWrite = min((size_t)CHUNK_SIZE, fb->len - bytesWritten);
           size_t written = stream->write(fb->buf + bytesWritten, bytesToWrite);
-          if (written != bytesToWrite) break;
+          if (written != bytesToWrite) {
+            Serial.printf("Stream write failed at byte %d\n", bytesWritten);
+            break;
+          }
           bytesWritten += written;
         }
         
         stream->print(footer);
         stream->flush();
         
+        String response = http.getString();
+        if (httpCode != 200) {
+          Serial.printf("Stream Error Details: %s\n", response.c_str());
+        }
+        
         bool result = (httpCode == 200);
         http.end();
         return result;
+      } else {
+        Serial.println("Failed to get HTTP stream");
       }
+    } else {
+      Serial.printf("Stream Request Failed: %s\n", http.errorToString(httpCode).c_str());
     }
     http.end();
     return false;
@@ -369,6 +394,67 @@ bool sendHeartbeat() {
   
   http.end();
   return success;
+}
+
+// ===========================
+// Network Testing
+// ===========================
+
+bool testServerConnectivity() {
+  Serial.println("Testing server connectivity...");
+  
+  // Test basic HTTP connection
+  http.begin(client, SERVER_URL);
+  http.addHeader("X-API-Key", API_KEY);
+  http.setTimeout(5000); // Shorter timeout for connectivity test
+  
+  // Try a simple GET request first
+  int httpCode = http.GET();
+  
+  Serial.printf("Server connectivity test result: %d\n", httpCode);
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("Server response: %s\n", response.substring(0, 200).c_str()); // First 200 chars
+    
+    if (httpCode == 200 || httpCode == 405) { // 405 = Method Not Allowed is OK for GET on POST endpoint
+      Serial.println("✅ Server is reachable");
+      http.end();
+      return true;
+    } else {
+      Serial.printf("⚠️ Server returned unexpected code: %d\n", httpCode);
+    }
+  } else {
+    Serial.printf("❌ Server connection failed: %s\n", http.errorToString(httpCode).c_str());
+  }
+  
+  http.end();
+  return false;
+}
+
+bool testSimpleUpload() {
+  Serial.println("Testing simple HTTP POST...");
+  
+  http.begin(client, SERVER_URL);
+  http.addHeader("X-API-Key", API_KEY);
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(10000);
+  
+  // Send a simple JSON test payload
+  String testPayload = "{\"test\":\"ESP32-camera-connectivity\",\"timestamp\":" + String(millis()) + "}";
+  
+  int httpCode = http.POST(testPayload);
+  Serial.printf("Simple POST test result: %d\n", httpCode);
+  
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.printf("Simple POST response: %s\n", response.substring(0, 200).c_str());
+    http.end();
+    return (httpCode == 200 || httpCode == 400); // 400 might be expected for wrong format
+  } else {
+    Serial.printf("Simple POST failed: %s\n", http.errorToString(httpCode).c_str());
+    http.end();
+    return false;
+  }
 }
 
 #endif // CAMERA_NETWORK_H
