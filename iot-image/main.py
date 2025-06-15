@@ -138,6 +138,7 @@ class DataStore:
     
     async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
         """Perform face recognition on image bytes"""
+        logger.info("Attempting face recognition...")
         try:
             # Check if face_recognition library is available
             try:
@@ -145,45 +146,67 @@ class DataStore:
                 face_recognition_available = True
             except ImportError:
                 logger.warning("face_recognition library not available")
-                return {"status": "library_unavailable", "recognizedAs": None}
+                return {"status": "library_unavailable", "recognizedAs": None, "error": "face_recognition library not found"}
             
             # Convert bytes to numpy array
             nparr = np.frombuffer(image_bytes, np.uint8)
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
+            if image is None:
+                logger.error("Could not decode image from bytes.")
+                return {"status": "image_decode_error", "recognizedAs": None, "error": "Could not decode image"}
+
             # Convert BGR to RGB
             rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
             # Find faces in the image
+            logger.info("Detecting face locations...")
             face_locations = face_recognition.face_locations(rgb_image)
+            logger.info(f"Found {len(face_locations)} face(s).")
             
             if not face_locations:
-                return {"status": "no_face_detected", "recognizedAs": None}
+                return {"status": "no_face_detected", "recognizedAs": None, "faces_detected": 0}
             
             # Get face encodings
+            logger.info("Encoding faces...")
             face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
             
             # Check against permitted faces
+            if not permitted_face_encodings:
+                logger.warning("No permitted faces loaded. Cannot perform matching.")
+                return {"status": "unknown_face", "recognizedAs": None, "faces_detected": len(face_locations), "error": "No permitted faces loaded for comparison"}
+
             for face_encoding in face_encodings:
-                if permitted_face_encodings:
-                    # Compare with known faces
-                    matches = face_recognition.compare_faces(permitted_face_encodings, face_encoding, tolerance=0.5)
-                    face_distances = face_recognition.face_distance(permitted_face_encodings, face_encoding)
-                    
-                    best_match_index = np.argmin(face_distances)
-                    
-                    if matches[best_match_index] and face_distances[best_match_index] < 0.5:
-                        return {
-                            "status": "permitted_face",
-                            "recognizedAs": permitted_face_names[best_match_index],
-                            "confidence": float(1 - face_distances[best_match_index])
-                        }
+                # Compare with known faces
+                logger.info("Comparing face encoding with permitted faces...")
+                matches = face_recognition.compare_faces(permitted_face_encodings, face_encoding, tolerance=0.5)
+                face_distances = face_recognition.face_distance(permitted_face_encodings, face_encoding)
+                
+                if len(face_distances) == 0: # Should not happen if permitted_face_encodings is not empty
+                    logger.warning("Face distances array is empty, though permitted faces exist.")
+                    continue
+
+                best_match_index = np.argmin(face_distances)
+                
+                logger.info(f"Best match index: {best_match_index}, Match: {matches[best_match_index]}, Distance: {face_distances[best_match_index]}")
+
+                if matches[best_match_index] and face_distances[best_match_index] < 0.5:
+                    recognized_name = permitted_face_names[best_match_index]
+                    confidence = float(1 - face_distances[best_match_index])
+                    logger.info(f"Permitted face recognized: {recognized_name} with confidence {confidence}")
+                    return {
+                        "status": "permitted_face",
+                        "recognizedAs": recognized_name,
+                        "confidence": confidence,
+                        "faces_detected": len(face_locations)
+                    }
             
-            return {"status": "unknown_face", "recognizedAs": None}
+            logger.info("No permitted face matched. Face is unknown.")
+            return {"status": "unknown_face", "recognizedAs": None, "faces_detected": len(face_locations)}
             
         except Exception as e:
-            logger.error(f"Error in face recognition: {e}")
-            return {"status": "recognition_error", "recognizedAs": None}
+            logger.error(f"Error in face recognition: {e}", exc_info=True)
+            return {"status": "recognition_error", "recognizedAs": None, "error": str(e)}
 
 # Initialize data store
 data_store = DataStore()
@@ -426,46 +449,65 @@ async def get_system_status():
 async def recognize_face(
     file: UploadFile = File(...)
 ):
-    """Face recognition endpoint compatible with Node.js backend"""
+    """
+    Receives an image file, performs face recognition, and returns the result.
+    """
+    logger.info(f"Received request for /recognize for file: {file.filename}")
     try:
-        if not file.content_type.startswith('image/'):
-            raise HTTPException(status_code=400, detail="File must be an image")
-        
-        # Read image bytes
         image_bytes = await file.read()
+        if not image_bytes:
+            logger.error("Received empty file for recognition.")
+            raise HTTPException(status_code=400, detail="Empty file uploaded")
+
+        logger.info(f"File size: {len(image_bytes)} bytes. Performing recognition...")
         
-        # Perform face recognition
+        # Ensure permitted faces are loaded (or reloaded if necessary)
+        # This might be better in startup or a separate refresh mechanism if faces change often
+        if not permitted_face_encodings: # Check if it's empty
+            logger.info("Permitted faces not loaded. Attempting to load now.")
+            data_store.load_permitted_faces() 
+            if not permitted_face_encodings:
+                 logger.warning("Permitted faces are still not loaded after attempting reload. Recognition might fail or be limited.")
+
+
+        start_time = time.time()
         recognition_result = await data_store.perform_face_recognition(image_bytes)
+        end_time = time.time()
         
-        # Format response to match expected structure
-        if recognition_result["status"] == "permitted_face":
-            return {
-                "status": "success",
-                "recognized_faces": [{
-                    "name": recognition_result["recognizedAs"],
-                    "confidence": recognition_result.get("confidence", 0.8)
-                }],
-                "faces_detected": 1,
-                "processing_time": 0.1
-            }
-        elif recognition_result["status"] == "unknown_face":
-            return {
-                "status": "success",
-                "recognized_faces": [],
-                "faces_detected": 1,
-                "processing_time": 0.1
-            }
-        else:
-            return {
-                "status": "success",
-                "recognized_faces": [],
-                "faces_detected": 0,
-                "processing_time": 0.1
-            }
-        
+        processing_time = round((end_time - start_time) * 1000, 2) # in milliseconds
+        logger.info(f"Recognition for {file.filename} completed in {processing_time}ms. Result: {recognition_result}")
+
+        # Standardize response
+        response_data = {
+            "status": recognition_result.get("status", "error"), # Default to 'error' if status is missing
+            "recognized_faces": [],
+            "faces_detected": recognition_result.get("faces_detected", 0),
+            "processing_time": processing_time,
+            "error": recognition_result.get("error")
+        }
+
+        if recognition_result.get("status") == "permitted_face":
+            response_data["recognized_faces"].append({
+                "name": recognition_result.get("recognizedAs"),
+                "confidence": recognition_result.get("confidence")
+            })
+        # If status is unknown_face, no_face_detected, or an error, recognized_faces remains empty or error is populated
+
+        return JSONResponse(content=response_data)
+
+    except HTTPException as http_exc: # Re-raise HTTPExceptions
+        raise http_exc
     except Exception as e:
-        logger.error(f"Error in face recognition: {e}")
-        raise HTTPException(status_code=500, detail=f"Face recognition failed: {str(e)}")
+        logger.error(f"Unexpected error in /recognize endpoint: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "server_error", 
+                "recognized_faces": [], 
+                "faces_detected": 0,
+                "error": f"Internal server error: {str(e)}"
+            }
+        )
 
 if __name__ == "__main__":
     # Setup signal handlers for graceful shutdown

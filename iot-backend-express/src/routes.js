@@ -144,6 +144,7 @@ function setupRoutes(app, dataStore, wss) {
   // Stream endpoint with face recognition
   app.post('/api/v1/stream/stream', streamUpload.single('image'), async (req, res) => {
     if (!req.file) {
+      console.log('[Stream API] No image provided in request');
       return res.status(400).json({ error: 'No image provided' });
     }
 
@@ -152,40 +153,52 @@ function setupRoutes(app, dataStore, wss) {
     const filename = `${deviceId}_${timestamp}.jpg`;
     const filePath = path.join(dataDir, filename);
 
+    console.log(`[Stream API] Received frame from device: ${deviceId}, timestamp: ${timestamp}`);
+
     try {
       // Save the image to the data directory
       await fsp.writeFile(filePath, req.file.buffer);
-      console.log('Frame saved:', filePath);
+      console.log('[Stream API] Frame saved:', filePath);
 
       // Perform face recognition
+      console.log('[Stream API] Initiating face recognition for frame:', filename);
       const recognition = await dataStore.performFaceRecognition(req.file.buffer);
-
+      console.log('[Stream API] Face recognition result for frame ', filename, ':', JSON.stringify(recognition));
+      
       // Broadcast to WebSocket clients
+      const wsMessage = {
+        type: 'new_frame',
+        deviceId,
+        timestamp,
+        filename,
+        url: `/data/${filename}`,
+        recognition: {
+          status: recognition.status,
+          recognizedAs: recognition.recognizedAs,
+          confidence: recognition.confidence, // Make sure to include confidence if available
+          error: recognition.error // Include error details if any
+        }
+      };
+      
+      console.log('[Stream API] Broadcasting WebSocket message:', JSON.stringify(wsMessage));
       wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify({
-            type: 'new_frame',
-            deviceId,
-            timestamp,
-            filename,
-            url: `/data/${filename}`,
-            recognition: {
-              status: recognition.status,
-              recognizedAs: recognition.recognizedAs
-            }
-          }));
+          client.send(JSON.stringify(wsMessage));
         }
       });
 
       res.json({ 
         message: 'Frame received', 
+        filename: filename,
         recognitionStatus: recognition.status, 
-        recognizedAs: recognition.recognizedAs 
+        recognizedAs: recognition.recognizedAs,
+        confidence: recognition.confidence,
+        error: recognition.error
       });
 
     } catch (err) {
-      console.error('Error processing frame:', err);
-      res.status(500).json({ error: 'Failed to process frame' });
+      console.error('[Stream API] Error processing frame:', err.message, err.stack);
+      res.status(500).json({ error: 'Failed to process frame', details: err.message });
     }
   });
 
