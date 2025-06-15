@@ -83,7 +83,7 @@ except ImportError:
 
 # Attempt to import ssh_tunnel_utils and set a flag
 try:
-    from ssh_tunnel_utils import create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance
+    from ssh_tunnel import create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance # Changed from ssh_tunnel_utils
     ssh_tunnel_available = True
     logger.info("SSH Tunnel utilities loaded successfully.") # Now logger is defined
 except ImportError as e:
@@ -125,31 +125,40 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during DataStore initialization or explicit face loading in lifespan startup: {e}", exc_info=True)
 
     if ssh_tunnel_available and create_ssh_tunnel and stop_ssh_tunnel and get_tunnel_instance:
-        ssh_host = os.getenv("SSH_HOST")
-        ssh_port_str = os.getenv("SSH_PORT", "22")
+        ssh_host = os.getenv("PUBLIC_VPS_IP") # Changed from SSH_HOST
+        ssh_connection_port_str = os.getenv("SSH_SERVER_PORT", "22") # New: Port for SSH connection itself
         ssh_user = os.getenv("SSH_USER")
-        ssh_remote_port = os.getenv('SSH_TUNNEL_REMOTE_PORT')
-        ssh_local_port = os.getenv('SSH_TUNNEL_LOCAL_PORT', os.getenv('PORT', '9001')) # Default to app's port
+        ssh_password = os.getenv("SSH_PASSWORD")
+        ssh_remote_bind_port_str = os.getenv('PUBLIC_PORT') # Changed from SSH_TUNNEL_REMOTE_PORT
+        # PRIVATE_SERVER_PORT is the port the FastAPI app runs on, which is also the local end of the tunnel.
+        ssh_local_bind_port_str = os.getenv('PRIVATE_SERVER_PORT', os.getenv('PORT', '9001')) # Default to app's port
 
-        if ssh_server and ssh_username and ssh_password and ssh_remote_port:
-            logger.info(f"Attempting to start SSH reverse tunnel to {ssh_server}...")
+        logger.info(f"SSH Config: Host={ssh_host}, SSH_Connection_Port={ssh_connection_port_str}, User={ssh_user}, RemoteBindPort(PublicPort)={ssh_remote_bind_port_str}, LocalBindPort(PrivateServerPort)={ssh_local_bind_port_str}")
+        if ssh_password:
+            logger.info("SSH_PASSWORD is set.")
+        else:
+            logger.warning("SSH_PASSWORD is NOT set (key-based auth may still work if SSH_PRIVATE_KEY_PATH is set).")
+
+        if ssh_host and ssh_user and ssh_remote_bind_port_str and ssh_local_bind_port_str:
+            logger.info(f"Attempting to start SSH reverse tunnel to {ssh_host}...")
             try:
-                # Ensure parameters are correctly typed for sshtunnel
-                remote_bind_port_int = int(ssh_remote_port)
-                local_bind_port_int = int(ssh_local_port)
+                remote_bind_port_int = int(ssh_remote_bind_port_str)
+                local_bind_port_int = int(ssh_local_bind_port_str)
+                ssh_connection_port_int = int(ssh_connection_port_str)
                 
-                logger.info(f"SSH Tunnel Params: Server={ssh_server}, User={ssh_username}, RemotePort={remote_bind_port_int}, LocalPort={local_bind_port_int}")
+                logger.info(f"SSH Tunnel Params: public_vps_ip={ssh_host}, ssh_server_port={ssh_connection_port_int}, ssh_user={ssh_user}, public_port={remote_bind_port_int}, private_server_port={local_bind_port_int}")
 
                 ssh_tunnel_instance = create_ssh_tunnel(
-                    ssh_address_or_host=ssh_server,
-                    ssh_username=ssh_username,
-                    ssh_password=ssh_password,
-                    remote_bind_address=('0.0.0.0', remote_bind_port_int),
-                    local_bind_address=('127.0.0.1', local_bind_port_int)
-                    # auto_start is typically True by default in sshtunnel
+                    public_vps_ip=ssh_host,
+                    ssh_server_port=ssh_connection_port_int, 
+                    ssh_user=ssh_user,
+                    ssh_password=ssh_password, # Will be None if not set, ssh_tunnel.py handles key fallback
+                    public_port=remote_bind_port_int,
+                    private_server_port=local_bind_port_int,
+                    # private_key_path and passphrase will be picked up from env by SSHTunnel class if not passed here
                 )
                 if ssh_tunnel_instance:
-                    logger.info(f"SSH tunnel object created. Trusting sshtunnel library to log connection status. Tunnel: {ssh_server}:{remote_bind_port_int} -> localhost:{local_bind_port_int}")
+                    logger.info(f"SSH tunnel object created. Tunnel: {ssh_host}:{remote_bind_port_int} -> localhost:{local_bind_port_int}")
                     # Adding a small delay to allow the tunnel thread to attempt connection,
                     # as sshtunnel usually starts the connection in a background thread.
                     time.sleep(3) # Increased sleep to 3 seconds
@@ -168,9 +177,13 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Failed to start or verify SSH tunnel: {type(e).__name__} - {e}", exc_info=True)
         else:
             logger.warning("SSH tunnel environment variables not fully configured. Tunnel not started.")
-            logger.warning(f"SSH_TUNNEL_SERVER: {ssh_server}, SSH_TUNNEL_USERNAME: {ssh_username}, SSH_TUNNEL_REMOTE_PORT: {ssh_remote_port}, SSH_TUNNEL_LOCAL_PORT: {ssh_local_port}")
-            if not ssh_password: # Specifically check for password presence for logging
-                logger.warning("SSH_TUNNEL_PASSWORD is not set.")
+            if not ssh_host: logger.warning("PUBLIC_VPS_IP is not set.")
+            if not ssh_user: logger.warning("SSH_USER is not set.")
+            # Password not being set isn't necessarily an error if key auth is used.
+            # if not ssh_password: logger.warning("SSH_PASSWORD is not set.") 
+            if not ssh_remote_bind_port_str: logger.warning("PUBLIC_PORT (for remote tunnel bind) is not set.")
+            if not ssh_local_bind_port_str: logger.warning("PRIVATE_SERVER_PORT (for local tunnel bind, or PORT) is not set.")
+
     else:
         logger.info("SSH tunnel utilities (create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance) not available or not imported. Skipping tunnel setup.")
     

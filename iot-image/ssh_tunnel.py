@@ -19,22 +19,25 @@ class SSHTunnel:
     """SSH Reverse Tunnel implementation using paramiko"""
     
     def __init__(self, 
-                 private_server_port: int = None,
-                 public_port: int = None,
+                 public_vps_ip: str = None, # Renamed from public_vps_ip for clarity in signature
+                 ssh_server_port: int = None, # Added for SSH connection port
                  ssh_user: str = None,
-                 public_vps_ip: str = None,
                  ssh_password: str = None,
                  private_key_path: str = None,
-                 passphrase: str = None):
+                 passphrase: str = None,
+                 public_port: int = None, # Renamed from remote_port for clarity, this is tunnel's public listening port
+                 private_server_port: int = None): # This is the local service port
         
-        # Load from environment if not provided
-        self.private_server_port = private_server_port or int(os.getenv('PRIVATE_SERVER_PORT', '9001'))
-        self.public_port = public_port or int(os.getenv('PUBLIC_PORT', '9005'))
-        self.ssh_user = ssh_user or os.getenv('SSH_USER', 'root')
+        # Load from environment if not provided, using names from .env.example
         self.public_vps_ip = public_vps_ip or os.getenv('PUBLIC_VPS_IP')
+        self.ssh_server_port = ssh_server_port or int(os.getenv('SSH_SERVER_PORT', '22')) # SSH connection port
+        self.ssh_user = ssh_user or os.getenv('SSH_USER', 'root')
         self.ssh_password = ssh_password or os.getenv('SSH_PASSWORD')
         self.private_key_path = private_key_path or os.getenv('SSH_PRIVATE_KEY_PATH')
         self.passphrase = passphrase or os.getenv('SSH_PASSPHRASE')
+        
+        self.public_port = public_port or int(os.getenv('PUBLIC_PORT', '9005')) # Tunnel's public listening port
+        self.private_server_port = private_server_port or int(os.getenv('PRIVATE_SERVER_PORT', '9001')) # Local service port
         
         self.ssh_client = None
         self.transport = None
@@ -153,7 +156,7 @@ class SSHTunnel:
             # Prepare authentication
             connect_kwargs = {
                 'hostname': self.public_vps_ip,
-                'port': 22,
+                'port': self.ssh_server_port, # Use configurable SSH server port
                 'username': self.ssh_user,
                 'timeout': 20,
                 'allow_agent': False,
@@ -176,6 +179,15 @@ class SSHTunnel:
             self.ssh_client.connect(**connect_kwargs)
             self.transport = self.ssh_client.get_transport()
             
+            # Set SSH keepalive
+            if self.transport and self.transport.is_active():
+                try:
+                    # Send keepalive packets every 60 seconds, max 3 unanswered probes before considering connection dead
+                    logger.info("Setting SSH keepalive (interval: 60s, max_probes: 3)")
+                    self.transport.set_keepalive(interval=60, count_max=3)
+                except Exception as e:
+                    logger.warning(f"Could not set SSH keepalive: {e}")
+
             logger.info("SSH connection established")
             
             # Setup reverse tunnel
