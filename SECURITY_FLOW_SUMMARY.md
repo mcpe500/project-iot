@@ -70,13 +70,13 @@ ESP32 Camera → Backend Stream → WebSocket → Frontend Display
 ```bash
 # Backend
 API_KEY=your-secure-api-key-here
-PORT=9004
+PORT=9005
 HOST=0.0.0.0
 
 # Frontend
 EXPO_PUBLIC_API_KEY=your-secure-api-key-here
-EXPO_PUBLIC_BACKEND_URL=http://your-backend-server:9004
-EXPO_PUBLIC_WS_URL=ws://your-backend-server:9004
+EXPO_PUBLIC_BACKEND_URL=http://your-backend-server:9005
+EXPO_PUBLIC_WS_URL=ws://your-backend-server:9005
 ```
 
 ### Security Best Practices Implemented

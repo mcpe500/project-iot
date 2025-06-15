@@ -10,7 +10,7 @@ dotenv.config();
 
 /**
  * Resolves paths like ~/.ssh/id_rsa to absolute paths.
- * @param {string} inputPath Path potentially starting with ~
+ * @param {string} inputPath - Path potentially starting with ~
  * @returns {string} Absolute path
  */
 function resolvePath(inputPath) {
@@ -24,17 +24,17 @@ function resolvePath(inputPath) {
 }
 
 /**
- * Creates and maintains an SSH reverse tunnel
- * @param {number} privateServerPort Local server port (default: 3000)
- * @param {number} publicPort Public VPS port (default: 9001)
- * @param {string} sshUser SSH username
- * @param {string} publicVpsIp Public VPS IP
- * @param {string} sshPassword SSH password
- * @param {string} privateKeyPath SSH private key path
- * @param {string} passphrase Private key passphrase
- * @returns {Client|null} SSH client instance or null
+ * Creates and maintains an SSH reverse tunnel using the ssh2 library.
+ * @param {number} [privateServerPort=3000] - Port where your local server is running (default: from env or 3000).
+ * @param {number} [publicPort=9001] - Port on the public VPS to listen on (default: from env or 9001).
+ * @param {string} [sshUser='user'] - SSH user for the public VPS (default: from env or 'user').
+ * @param {string} [publicVpsIp] - IP address of the public VPS (required, from env).
+ * @param {string} [sshPassword] - SSH password (optional, from env).
+ * @param {string} [privateKeyPath] - Path to the SSH private key (optional, from env).
+ * @param {string} [passphrase] - Passphrase for the private key (optional, from env).
+ * @returns {import('ssh2').Client | null} The ssh2 Client instance if successful, otherwise null.
  */
-function createSshTunnel(
+exports.createSshTunnel = function createSshTunnel(
     privateServerPort = parseInt(process.env.PRIVATE_SERVER_PORT || '3000', 10),
     publicPort = parseInt(process.env.PUBLIC_PORT || '9001', 10),
     sshUser = process.env.SSH_USER || 'user',
@@ -43,184 +43,165 @@ function createSshTunnel(
     privateKeyPath = process.env.SSH_PRIVATE_KEY_PATH,
     passphrase = process.env.SSH_PASSPHRASE
 ) {
-    console.log(`Creating SSH tunnel to ${sshUser}@${publicVpsIp}:${publicPort} (local port: ${privateServerPort})`);
+
     if (!publicVpsIp) {
-        console.error('[Error] PUBLIC_VPS_IP is not defined');
+        console.error('[Error] PUBLIC_VPS_IP is not defined in environment variables or passed as argument.');
         return null;
     }
 
-    const resolvedKeyPath = privateKeyPath ? resolvePath(privateKeyPath) : undefined;    const authConfig = {
+    const resolvedKeyPath = privateKeyPath ? resolvePath(privateKeyPath) : undefined;
+
+    // --- Authentication Configuration ---
+    const authConfig = {
         host: publicVpsIp,
-        port: 22,
+        port: 22, // Default SSH port
         username: sshUser,
-        readyTimeout: 30000,
-        keepaliveInterval: 5000,  // More frequent keepalives
-        keepaliveCountMax: 10,    // More retries before giving up
-        // algorithms: {
-        //     kex: ['diffie-hellman-group14-sha256', 'diffie-hellman-group14-sha1'],
-        //     cipher: ['aes128-ctr', 'aes192-ctr', 'aes256-ctr'],
-        //     serverHostKey: ['ssh-rsa', 'ssh-dss'],
-        //     hmac: ['hmac-sha2-256', 'hmac-sha2-512', 'hmac-sha1']
-        // },
-        forceIPv4: true,          // Force IPv4
-        tryKeyboard: true,        // Try keyboard-interactive auth
-        debug: console.log        // Enable debug logging
+        readyTimeout: 20000, // Increase timeout for potentially slower connections
+        keepaliveInterval: 15000, // Send keepalive every 15 seconds
+        keepaliveCountMax: 5, // Disconnect after 5 missed keepalives
     };
 
     if (resolvedKeyPath) {
         try {
+            console.log(`[Info] Attempting SSH connection using key: ${resolvedKeyPath}`);
             authConfig.privateKey = fs.readFileSync(resolvedKeyPath);
-            if (passphrase) authConfig.passphrase = passphrase;
+            if (passphrase) {
+                authConfig.passphrase = passphrase;
+            }
         } catch (err) {
-            console.error(`Failed to read private key: ${err.message}`);
-            if (!sshPassword) return null;
+            console.error(`[Error] Failed to read private key file "${resolvedKeyPath}": ${err.message}`);
+            // Optionally fall back to password or just fail
+            if (!sshPassword) {
+                console.error('[Error] No password provided as fallback.');
+                return null;
+            }
+            console.warn('[Warn] Falling back to password authentication.');
             authConfig.password = sshPassword;
         }
     } else if (sshPassword) {
+        console.log(`[Info] Attempting SSH connection using password for user ${sshUser}`);
         authConfig.password = sshPassword;
     } else {
-        console.error('No SSH credentials provided');
+        console.error('[Error] No SSH password or private key path provided.');
         return null;
-    }    const conn = new Client();
+    }
+
+    // --- SSH Client Setup ---
+    const conn = new Client();
     let retryTimeout = null;
-    let reconnectAttempts = 0;
-    const maxReconnectAttempts = 50; // Increase max attempts
-    let isConnected = false;
 
     const connect = () => {
         if (retryTimeout) clearTimeout(retryTimeout);
-        
-        if (reconnectAttempts >= maxReconnectAttempts) {
-            console.error(`Max reconnection attempts (${maxReconnectAttempts}) reached. Stopping.`);
-            return;
-        }
-        
-        reconnectAttempts++;
-        console.log(`Connecting to ${sshUser}@${publicVpsIp}... (attempt ${reconnectAttempts}/${maxReconnectAttempts})`);
-        
-        // Force close any existing connection
-        if (conn._sock && !conn._sock.destroyed) {
-            conn._sock.destroy();
-        }
-        
+        console.log(`[Info] Connecting to ${sshUser}@${publicVpsIp}...`);
         conn.connect(authConfig);
-    };    conn.on('ready', () => {
-        console.log('SSH connection established');
-        isConnected = true;
-        reconnectAttempts = 0; // Reset retry counter on successful connection
-        
-        // Force kill any existing listeners on the remote port
-        conn.exec(`pkill -f "0.0.0.0:${publicPort}" || true`, (err, stream) => {
-            if (stream) {
-                stream.on('close', () => {
-                    // Now start the forward
-                    startForward();
-                });
-            } else {
-                startForward();
-            }
-        });
-        
-        function startForward() {
-            conn.forwardIn('0.0.0.0', publicPort, (err, remotePort) => {
-                if (err) {
-                    console.error(`Failed to start remote listener: ${err}`);
-                    // Force retry even if port binding fails
-                    setTimeout(() => {
-                        console.log('Forcing reconnection after port binding failure...');
-                        conn.end();
-                        setTimeout(connect, 2000);
-                    }, 3000);
-                    return;
-                }
-                console.log(`Remote server listening on port ${remotePort} - TUNNEL FORCED ACTIVE`);
-                
-                conn.on('tcp connection', (info, accept) => {
-                    const sshStream = accept();
-                    const localSocket = net.connect(privateServerPort, 'localhost', () => {
-                        console.log(`Tunneling connection from ${info.srcIP}:${info.srcPort}`);
-                        sshStream.pipe(localSocket).pipe(sshStream);
-                    });
+    };
 
-                    localSocket.on('error', (err) => {
-                        console.error(`Local socket error: ${err.message}`);
-                        sshStream.end();
-                    });
-                    sshStream.on('close', () => localSocket.end());
-                    localSocket.on('close', () => sshStream.end());
-                    sshStream.on('error', (err) => {
-                        console.error(`SSH stream error: ${err.message}`);
-                        localSocket.end();
-                    });
+    conn.on('ready', () => {
+        console.log('[Success] SSH connection established.');
+
+        // --- Setup Reverse Tunnel (Remote Forwarding -R) ---
+        // Ask the remote server to listen on publicPort
+        conn.forwardIn('0.0.0.0', publicPort, (err, remotePort) => {
+            if (err) {
+                console.error(`[Error] Failed to start remote listener on port ${publicPort}:`, err);
+                conn.end(); // Close connection if forwarding fails
+                return;
+            }
+            console.log(`[Success] Remote server listening on port ${remotePort} (requested ${publicPort})`);
+
+            // --- Handle Incoming Connections from the Tunnel ---
+            conn.on('tcp connection', (info, accept, reject) => {
+                console.log(`[Info] Incoming tunnel connection from ${info.srcIP}:${info.srcPort} to ${info.destIP}:${info.destPort}`);
+
+                const sshStream = accept(); // Accept the connection from the remote side
+
+                // Connect to the local private server
+                console.log(`[Info] Attempting to connect to local service at localhost:${privateServerPort}...`);
+
+                const localSocket = net.connect(privateServerPort, 'localhost', () => {
+                    console.log(`[Success] Connected to local service on port ${privateServerPort}`);
+                    // Bridge the connections: Pipe data back and forth
+                    sshStream.pipe(localSocket).pipe(sshStream);
+                    console.log(`[Info] Data pipe established between remote client and local service`);
+                });
+
+                localSocket.on('error', (socketErr) => {
+                    console.error(`[Error] Local socket connection error (port ${privateServerPort}):`, socketErr.message);
+                    try {
+                        reject(); // Reject the SSH forwarded connection
+                    } catch (rejectErr) {
+                        console.error('[Error] Failed to reject SSH connection:', rejectErr.message);
+                    }
+                });
+
+                sshStream.on('close', () => {
+                    // console.log('[Info] SSH stream closed, closing local socket.');
+                    localSocket.end();
+                });
+
+                localSocket.on('close', (hadError) => {
+                    // console.log(`[Info] Local socket closed (hadError: ${hadError}), closing SSH stream.`);
+                    sshStream.end();
+                });
+
+                sshStream.on('error', (streamErr) => {
+                    console.error('[Error] SSH stream error:', streamErr.message);
+                    localSocket.end(); // Ensure local socket is closed on stream error
                 });
             });
-        }
-    });    conn.on('error', (err) => {
-        console.error(`SSH error: ${err.message}`);
-        isConnected = false;
-        
-        // Aggressive retry strategy
-        const retryDelay = Math.min(5000 + (reconnectAttempts * 1000), 30000); // Exponential backoff, max 30s
-        console.log(`Will retry in ${retryDelay}ms...`);
-        retryTimeout = setTimeout(connect, retryDelay);
+        });
+    });
+
+    conn.on('error', (err) => {
+        console.error(`[Error] SSH connection error: ${err.message}`);
+        // Optional: Implement retry logic here
+        console.log('[Info] Attempting to reconnect in 10 seconds...');
+        retryTimeout = setTimeout(connect, 10000); // Retry after 10 seconds
     });
 
     conn.on('close', (hadError) => {
-        console.log(`Connection closed ${hadError ? 'with error' : ''}`);
-        isConnected = false;
-        
-        // Always retry, even on clean close
-        const retryDelay = hadError ? 2000 : 5000;
-        console.log(`Forcing reconnection in ${retryDelay}ms...`);
-        retryTimeout = setTimeout(connect, retryDelay);
+        console.log(`[Info] SSH connection closed${hadError ? ' due to an error' : ''}.`);
+        // If not closed by an error, it might be an intentional close or a network drop.
+        // The current logic retries on any close, which is generally desirable for a persistent tunnel.
+        console.log('[Info] Attempting to reconnect in 10 seconds...');
+        retryTimeout = setTimeout(connect, 10000); // Retry after 10 seconds
     });
 
-    // Force connection monitoring
-    setInterval(() => {
-        if (!isConnected && !retryTimeout) {
-            console.log('Connection lost detected, forcing reconnection...');
-            connect();
-        }
-    }, 10000); // Check every 10 seconds
-
-    // Force immediate connection
-    console.log('🚀 FORCING SSH TUNNEL CONNECTION...');
+    // Initial connection attempt
     connect();
-    
-    // Add process cleanup handlers
-    process.on('SIGINT', () => {
-        console.log('Received SIGINT, cleaning up SSH tunnel...');
-        if (retryTimeout) clearTimeout(retryTimeout);
-        conn.end();
-        process.exit(0);
-    });
 
-    process.on('SIGTERM', () => {
-        console.log('Received SIGTERM, cleaning up SSH tunnel...');
-        if (retryTimeout) clearTimeout(retryTimeout);
-        conn.end();
-        process.exit(0);
-    });
-
-    // Return connection object with force methods
-    conn.forceReconnect = () => {
-        console.log('🔥 FORCING IMMEDIATE RECONNECTION...');
-        if (retryTimeout) clearTimeout(retryTimeout);
-        reconnectAttempts = 0;
-        isConnected = false;
-        if (conn._sock && !conn._sock.destroyed) {
-            conn._sock.destroy();
-        }
-        setTimeout(connect, 1000);
-    };
-
-    conn.getStatus = () => ({
-        connected: isConnected,
-        attempts: reconnectAttempts,
-        maxAttempts: maxReconnectAttempts
-    });
-
-    return conn;
+    return conn; // Return the client instance
 }
 
-module.exports = { createSshTunnel };
+// --- Example Usage ---
+// If executing this file directly (e.g., `node ssh-tunnel.js`)
+if (require.main === module) {
+    const sshClient = exports.createSshTunnel();
+
+    if (sshClient) {
+        console.log('SSH tunnel setup initiated. Keep this process running. Press Ctrl+C to exit.');
+
+        // Graceful shutdown
+        process.on('SIGINT', () => {
+            console.log('\n[Info] SIGINT received, closing SSH tunnel...');
+            if (sshClient) {
+                // Remove all listeners to prevent reconnection attempts during shutdown
+                sshClient.removeAllListeners();
+                sshClient.end();
+            }
+            process.exit(0);
+        });
+        process.on('SIGTERM', () => {
+            console.log('\n[Info] SIGTERM received, closing SSH tunnel...');
+            if (sshClient) {
+                sshClient.removeAllListeners();
+                sshClient.end();
+            }
+            process.exit(0);
+        });
+
+    } else {
+        console.error('[Fatal] Failed to initiate SSH tunnel setup.');
+        process.exit(1);
+    }
+}

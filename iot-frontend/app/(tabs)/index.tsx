@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Platform, TextInput } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, ActivityIndicator, ScrollView, Platform, TextInput, Animated } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
@@ -28,6 +28,8 @@ export default function LiveStreamScreen() {
   const [fps, setFps] = useState(0);
   const [lastFrameTime, setLastFrameTime] = useState<number | null>(null);
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
+  const [nextImageUrl, setNextImageUrl] = useState<string | null>(null);
+  const [imageLoaded, setImageLoaded] = useState(false);
   const [isSendingStream, setIsSendingStream] = useState(false);
   const [isRecordLoading, setIsRecordLoading] = useState(false);
   const [isAddingFace, setIsAddingFace] = useState(false);
@@ -67,9 +69,25 @@ export default function LiveStreamScreen() {
             timestamp: data.timestamp,
             recognition: data.recognition,
           };
-
+          // Preload the next image before switching
           Image.prefetch(newFrameUrl)
             .then(() => {
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                // Smooth transition: set next image, then switch after a tiny delay
+                setNextImageUrl(newFrameUrl);
+                setImageLoaded(true);
+                
+                // Switch to the new image smoothly
+                setTimeout(() => {
+                  setCurrentImageUrl(newFrameUrl);
+                  setLastFrame(newFrame);
+                  setNextImageUrl(null);
+                }, 50); // Small delay for smooth transition
+              }
+            })
+            .catch(error => {
+              console.error('Image prefetch failed:', error);
+              // Fallback: set the image directly if prefetch fails
               if (wsRef.current?.readyState === WebSocket.OPEN) {
                 setCurrentImageUrl(newFrameUrl);
                 setLastFrame(newFrame);
@@ -309,12 +327,26 @@ export default function LiveStreamScreen() {
           {isSendingStream ? (
             <CameraView style={styles.streamImage} facing={facing} ref={cameraRef} mode="picture" />
           ) : currentImageUrl ? (
-            <Image
-              source={{ uri: currentImageUrl }}
-              style={styles.streamImage}
-              resizeMode="contain"
-            />
-          ) : (
+            <View style={styles.imageContainer}>
+              <Image
+                source={{ uri: currentImageUrl }}
+                style={styles.streamImage}
+                resizeMode="contain"
+                onLoad={() => setImageLoaded(true)}
+                onError={() => setImageLoaded(false)}
+              />
+              {nextImageUrl && (
+                <Image
+                  source={{ uri: nextImageUrl }}
+                  style={[styles.streamImage, styles.preloadImage]}
+                  resizeMode="contain"
+                  onLoad={() => {
+                    // Image is ready in background, no visual change needed
+                  }}
+                />
+              )}
+            </View>
+          )  : (
             <View style={styles.noStreamContainer}>
               <ActivityIndicator size="large" color="#aaa" />
               <Text style={styles.noStreamText}>
@@ -416,6 +448,18 @@ const styles = StyleSheet.create({
   streamImage: {
     width: '100%',
     height: '100%',
+  },
+  imageContainer: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  preloadImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    opacity: 0,
+    zIndex: -1,
   },
   noStreamContainer: {
     justifyContent: 'center',
