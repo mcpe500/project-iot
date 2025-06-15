@@ -80,7 +80,14 @@ void setup() {
   
   // Register device if WiFi connected
   if (WiFi.status() == WL_CONNECTED) {
-    registerDevice();
+    // Test server connectivity first
+    if (testServerConnectivity()) {
+      Serial.println("Testing simple HTTP POST...");
+      testSimpleUpload();
+      registerDevice();
+    } else {
+      Serial.println("⚠️ Server connectivity test failed - will retry during streaming");
+    }
   }
   
   Serial.println("Setup complete. Starting video stream...");
