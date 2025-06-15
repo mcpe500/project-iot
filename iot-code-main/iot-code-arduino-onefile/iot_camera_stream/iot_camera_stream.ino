@@ -20,11 +20,11 @@
 // ===========================
 // Configuration Section
 // ===========================
-const char* ssid = "WIFI_SSID_5G";
+const char* ssid = "WIFI_SSID";
 const char* password = "WIFI_PASSWORD";
-const char* server_url = "http://SERVER_IP:9003/api/v1/stream/stream";
-const char* register_url = "http://SERVER_IP:9003/api/v1/devices/register";
-const char* heartbeat_url = "http://SERVER_IP:9003/api/v1/devices/heartbeat";
+const char* server_url = "http://SERVER_IP:9004/api/v1/stream/stream";
+const char* register_url = "http://SERVER_IP:9004/api/v1/devices/register";
+const char* heartbeat_url = "http://SERVER_IP:9004/api/v1/devices/heartbeat";
 const char* api_key = "dev-api-key-change-in-production";
 const char* device_id = "ESP32-CAM-001";
 const char* device_name = "Camera #1";
