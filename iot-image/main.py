@@ -102,7 +102,8 @@ class DataStore:
     
     def get_all_devices(self) -> List[Dict[str, Any]]:
         return list(self.devices.values())
-      def load_permitted_faces(self):
+    
+    def load_permitted_faces(self):
         """Load permitted faces from the permitted_faces directory"""
         global permitted_face_encodings, permitted_face_names
         permitted_face_encodings = []
