@@ -20,8 +20,8 @@
 // ===========================
 // Configuration Section
 // ===========================
-const char* ssid = "WIFI_SSID";
-const char* password = "WIFI_PASSWORD";
+const char* ssid = "BIZNET357";
+const char* password = "ivan4321";
 const char* server_url = "http://SERVER_IP:9004/api/v1/stream/stream";
 const char* register_url = "http://SERVER_IP:9004/api/v1/devices/register";
 const char* heartbeat_url = "http://SERVER_IP:9004/api/v1/devices/heartbeat";

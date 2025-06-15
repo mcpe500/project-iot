@@ -1,0 +1,8 @@
+/__pycache__
+__pycache__/
+/__pycache__/
+
+venv/Lib/site-packages
+venv/Lib/site-packages/
+/venv/Lib/site-packages/
+venv/Lib/site-packages/*

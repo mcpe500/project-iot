@@ -7,7 +7,7 @@ const path = require('path');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 
-const { dataDir, recordingsDir, canvasModule } = require('./dataStore');
+const { dataDir, recordingsDir } = require('./dataStore');
 
 // Placeholder data for demo purposes
 let devices = [
