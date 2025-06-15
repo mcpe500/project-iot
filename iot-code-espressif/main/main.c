@@ -20,7 +20,8 @@
 #include "esp_pm.h"
 #include "esp_psram.h"
 #include "nvs_flash.h"
-#include "cjson/cJSON.h"  // Updated include path for ESP-IDF v5.3+
+#include "cJSON.h"
+#include "esp_timer.h"
 
 static const char *TAG = "HD_CAMERA";
 
@@ -201,7 +202,7 @@ void network_task(void *pvParameters) {
     while (1) {
         if (xQueueReceive(frame_queue, &frame, portMAX_DELAY) == pdTRUE) {
             char boundary[64];
-            snprintf(boundary, sizeof(boundary), "----ESP32CAMBoundary%lld", esp_timer_get_time());
+            snprintf(boundary, sizeof(boundary), "----ESP32CAMBoundary%llu", (unsigned long long)esp_timer_get_time());
             
             char content_type[100];
             snprintf(content_type, sizeof(content_type), "multipart/form-data; boundary=%s", boundary);
@@ -283,14 +284,14 @@ void utility_task(void *pvParameters) {
         free(hb_payload);
 
         // Stats
-        ESP_LOGI(TAG, "STATS | Sent: %lu, Capture Fails: %lu, Net Fails: %lu | Heap: %d, PSRAM: %d",
-            frame_count, capture_fails, network_errors, esp_get_free_heap_size(), heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        ESP_LOGI(TAG, "STATS | Sent: %lu, Capture Fails: %lu, Net Fails: %lu | Heap: %lu, PSRAM: %lu",
+            frame_count, capture_fails, network_errors, (unsigned long)esp_get_free_heap_size(), (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     }
 }
 
 void app_main(void) {
     // Set CPU to max performance
-    esp_pm_config_esp32s3_t pm_config = { .max_freq_mhz = 240, .min_freq_mhz = 240, .light_sleep_enable = false };
+    esp_pm_config_t pm_config = { .max_freq_mhz = 240, .min_freq_mhz = 240, .light_sleep_enable = false };
     ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
 
     ESP_ERROR_CHECK(nvs_flash_init());
