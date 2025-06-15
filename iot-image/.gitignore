@@ -6,3 +6,5 @@ venv/Lib/site-packages
 venv/Lib/site-packages/
 /venv/Lib/site-packages/
 venv/Lib/site-packages/*
+
+.env
