@@ -20,8 +20,8 @@
 // ===========================
 // Configuration Section
 // ===========================
-const char* ssid = "G123_967E";
-const char* password = "Ivan4321";
+const char* ssid = "BIZNET357";
+const char* password = "ivan4321";
 const char* server_url = "http://203.175.11.145:9004/api/v1/stream/stream";
 const char* register_url = "http://203.175.11.145:9004/api/v1/devices/register";
 const char* heartbeat_url = "http://203.175.11.145:9004/api/v1/devices/heartbeat";
