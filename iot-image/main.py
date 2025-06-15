@@ -112,22 +112,22 @@ logger.info(f"SSH Tunnel utilities available: {ssh_tunnel_available}")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    global ssh_tunnel_instance
+    global ssh_tunnel_instance # Ensure ssh_tunnel_instance is accessible globally if needed by other parts
     app.state.start_time = time.time()
     logger.info(f"Executing startup logic within lifespan. App start time set to: {app.state.start_time}")
     logger.info("IoT Backend GPU Server starting up...")
 
     try:
-        logger.info("Initializing DataStore and loading permitted faces during startup...")
-        data_store.load_permitted_faces() # Load faces on startup
-        logger.info("DataStore initialized and permitted faces loaded.")
+        logger.info("Initializing DataStore and loading permitted faces as part of DataStore init or explicitly here if needed.")
+        # data_store.load_permitted_faces() # This is called in DataStore.__init__
+        logger.info("Permitted faces loading process initiated by DataStore.")
     except Exception as e:
-        logger.error(f"Error during DataStore initialization or loading faces in startup: {e}", exc_info=True)
+        logger.error(f"Error during DataStore initialization or explicit face loading in lifespan startup: {e}", exc_info=True)
 
     if ssh_tunnel_available and create_ssh_tunnel and stop_ssh_tunnel and get_tunnel_instance:
-        ssh_server = os.getenv('SSH_TUNNEL_SERVER')
-        ssh_username = os.getenv('SSH_TUNNEL_USERNAME')
-        ssh_password = os.getenv('SSH_TUNNEL_PASSWORD')
+        ssh_host = os.getenv("SSH_HOST")
+        ssh_port_str = os.getenv("SSH_PORT", "22")
+        ssh_user = os.getenv("SSH_USER")
         ssh_remote_port = os.getenv('SSH_TUNNEL_REMOTE_PORT')
         ssh_local_port = os.getenv('SSH_TUNNEL_LOCAL_PORT', os.getenv('PORT', '9001')) # Default to app's port
 
