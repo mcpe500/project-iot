@@ -134,38 +134,45 @@ async def lifespan(app: FastAPI):
         if ssh_server and ssh_username and ssh_password and ssh_remote_port:
             logger.info(f"Attempting to start SSH reverse tunnel to {ssh_server}...")
             try:
+                # Ensure parameters are correctly typed for sshtunnel
+                remote_bind_port_int = int(ssh_remote_port)
+                local_bind_port_int = int(ssh_local_port)
+                
+                logger.info(f"SSH Tunnel Params: Server={ssh_server}, User={ssh_username}, RemotePort={remote_bind_port_int}, LocalPort={local_bind_port_int}")
+
                 ssh_tunnel_instance = create_ssh_tunnel(
                     ssh_address_or_host=ssh_server,
                     ssh_username=ssh_username,
                     ssh_password=ssh_password,
-                    remote_bind_address=('0.0.0.0', int(ssh_remote_port)),
-                    local_bind_address=('127.0.0.1', int(ssh_local_port))
+                    remote_bind_address=('0.0.0.0', remote_bind_port_int),
+                    local_bind_address=('127.0.0.1', local_bind_port_int)
+                    # auto_start is typically True by default in sshtunnel
                 )
                 if ssh_tunnel_instance:
-                    logger.info(f"SSH tunnel object created. Attempting to start tunnel thread for {ssh_server}:{ssh_remote_port} -> localhost:{ssh_local_port}")
-                    # The tunnel starts in a separate thread by the library's design upon creation if auto_start=True (default)
-                    # We will rely on the library's logging for confirmation.
-                    # A small delay to allow the tunnel to establish, though this is not a guarantee.
-                    time.sleep(2) # Brief pause to allow tunnel connection attempt
-                    tunnel_check = get_tunnel_instance()
-                    if tunnel_check and tunnel_check.is_active: # Re-check if is_active is available and works
-                         logger.info("SSH tunnel reported as active by get_tunnel_instance().is_active.")
-                    elif tunnel_check:
-                         logger.warning("SSH tunnel instance exists but is_active attribute is not True or not available. Trusting it started if no errors logged by ssh_tunnel library.")
+                    logger.info(f"SSH tunnel object created. Trusting sshtunnel library to log connection status. Tunnel: {ssh_server}:{remote_bind_port_int} -> localhost:{local_bind_port_int}")
+                    # Adding a small delay to allow the tunnel thread to attempt connection,
+                    # as sshtunnel usually starts the connection in a background thread.
+                    time.sleep(3) # Increased sleep to 3 seconds
+                    retrieved_tunnel = get_tunnel_instance()
+                    if retrieved_tunnel:
+                        logger.info("get_tunnel_instance() returned an object. Further status should be in sshtunnel logs.")
+                        # Avoid checking for 'is_active' as it caused AttributeErrors.
+                        # The library itself should handle and log connection success/failure.
                     else:
-                         logger.warning("SSH tunnel instance could not be retrieved after creation attempt.")
-
+                        logger.warning("get_tunnel_instance() returned None after tunnel creation attempt.")
                 else:
-                    logger.error("Failed to create SSH tunnel instance (returned None).")
+                    logger.error("Failed to create SSH tunnel instance (create_ssh_tunnel returned None).")
+            except ValueError as ve:
+                logger.error(f"ValueError during SSH tunnel setup (likely port conversion): {ve}", exc_info=True)
             except Exception as e:
                 logger.error(f"Failed to start or verify SSH tunnel: {type(e).__name__} - {e}", exc_info=True)
         else:
             logger.warning("SSH tunnel environment variables not fully configured. Tunnel not started.")
             logger.warning(f"SSH_TUNNEL_SERVER: {ssh_server}, SSH_TUNNEL_USERNAME: {ssh_username}, SSH_TUNNEL_REMOTE_PORT: {ssh_remote_port}, SSH_TUNNEL_LOCAL_PORT: {ssh_local_port}")
-            if not ssh_password:
+            if not ssh_password: # Specifically check for password presence for logging
                 logger.warning("SSH_TUNNEL_PASSWORD is not set.")
     else:
-        logger.info("SSH tunnel utilities (create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance) not available. Skipping tunnel setup.")
+        logger.info("SSH tunnel utilities (create_ssh_tunnel, stop_ssh_tunnel, get_tunnel_instance) not available or not imported. Skipping tunnel setup.")
     
     logger.info("Startup logic completed.")
     
