@@ -1,6 +1,7 @@
 /*
  * Configuration Header File
- * Contains all configuration constants and pin definitions
+ * Contains ONLY configuration constants, pin definitions, and compile-time settings
+ * No function declarations or global variables here
  */
 
 #ifndef CONFIG_H
@@ -9,22 +10,26 @@
 // ===========================
 // Network Configuration
 // ===========================
-const char* WIFI_SSID = "BIZNET357";
-const char* WIFI_PASSWORD = "ivan4321";
+#define WIFI_SSID "BIZNET357"
+#define WIFI_PASSWORD "ivan4321"
 
 // ===========================
 // Server Configuration
 // ===========================
-const char* SERVER_URL = "http://203.175.11.145:9005/api/v1/stream/stream";
-const char* REGISTER_URL = "http://203.175.11.145:9005/api/v1/devices/register";
-const char* HEARTBEAT_URL = "http://203.175.11.145:9005/api/v1/devices/heartbeat";
-const char* API_KEY = "dev-api-key-change-in-production";
+#define SERVER_URL "http://203.175.11.145:9005/api/v1/stream/stream"
+#define REGISTER_URL "http://203.175.11.145:9005/api/v1/devices/register"
+#define HEARTBEAT_URL "http://203.175.11.145:9005/api/v1/devices/heartbeat"
+#define API_KEY "dev-api-key-change-in-production"
+
+// Fallback/Alternative Servers
+#define FALLBACK_SERVER_URL "http://httpbin.org/post"
+#define LOCAL_SERVER_URL "http://192.168.18.100:3000/upload"
 
 // ===========================
 // Device Configuration
 // ===========================
-const char* DEVICE_ID = "ESP32-CAM-001";
-const char* DEVICE_NAME = "Camera #1";
+#define DEVICE_ID "ESP32-CAM-001"
+#define DEVICE_NAME "Camera #1"
 
 // ===========================
 // ESP32-S3 Camera Pin Configuration for OV5640
@@ -58,6 +63,21 @@ const char* DEVICE_NAME = "Camera #1";
 #define WIFI_RECONNECT_INTERVAL_MS 60000
 
 // ===========================
+// Thermal Management Configuration
+// ===========================
+#define ENABLE_THERMAL_MANAGEMENT true
+#define TEMPERATURE_CHECK_INTERVAL_MS 1500    // Check temperature every 1.5 seconds (more frequent)
+#define TEMPERATURE_THRESHOLD_WARM 60.0       // Start light optimizations (°C)
+#define TEMPERATURE_THRESHOLD_HIGH 68.0       // High temperature threshold (°C) - lowered
+#define TEMPERATURE_THRESHOLD_CRITICAL 75.0   // Critical temperature threshold (°C) - lowered
+#define COOLING_DELAY_MS 3000                 // Shorter cooling delay for responsiveness
+#define THERMAL_FPS_REDUCTION_FACTOR 0.75     // Reduce FPS to 75% when hot (less aggressive)
+#define THERMAL_QUALITY_ADJUSTMENT 1          // Smaller quality adjustment for better consistency
+#define PROACTIVE_COOLING_ENABLED true        // Enable proactive cooling before overheating
+#define TEMPERATURE_AVERAGING_SAMPLES 3       // Average temperature over multiple readings
+#define AGGRESSIVE_COOLING_AT_STARTUP true    // Apply conservative settings initially
+
+// ===========================
 // Camera Configuration
 // ===========================
 #define INITIAL_CPU_FREQ_MHZ 160
@@ -73,10 +93,15 @@ const char* DEVICE_NAME = "Camera #1";
 #define FB_COUNT_PSRAM 2
 #define FB_COUNT_DRAM 1
 
-// Network settings
-#define HTTP_TIMEOUT_MS 10000
+// ===========================
+// Network Settings
+// ===========================
+#define HTTP_TIMEOUT_MS 5000
 #define WIFI_RETRY_COUNT 30
 #define CHUNK_SIZE 1024
+#define USE_FALLBACK_ON_ERROR true
+#define MAX_SERVER_RETRIES 3
+#define SERVER_TIMEOUT_REDUCTION_STEP 2000
 
 // ===========================
 // Debug Configuration
