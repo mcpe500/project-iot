@@ -22,9 +22,9 @@
 // ===========================
 const char* ssid = "BIZNET357";
 const char* password = "ivan4321";
-const char* server_url = "http://203.175.11.145:9004/api/v1/stream/stream";
-const char* register_url = "http://203.175.11.145:9004/api/v1/devices/register";
-const char* heartbeat_url = "http://203.175.11.145:9004/api/v1/devices/heartbeat";
+const char* server_url = "http://203.175.11.145:9005/api/v1/stream/stream";
+const char* register_url = "http://203.175.11.145:9005/api/v1/devices/register";
+const char* heartbeat_url = "http://203.175.11.145:9005/api/v1/devices/heartbeat";
 const char* api_key = "dev-api-key-change-in-production";
 const char* device_id = "ESP32-CAM-001";
 const char* device_name = "Camera #1";

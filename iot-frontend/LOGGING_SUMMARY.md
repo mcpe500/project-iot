@@ -78,7 +78,7 @@ For production builds, consider:
 ## Example Log Output
 
 ```
-🚀 Live Stream App Starting... {backendUrl: "http://203.175.11.145:9004", wsUrl: "ws://203.175.11.145:9004", apiKey: "SET"}
+🚀 Live Stream App Starting... {backendUrl: "http://203.175.11.145:9005", wsUrl: "ws://203.175.11.145:9005", apiKey: "SET"}
 🔐 API Request: GET /api/v1/devices/devices with API key
 📊 Devices API response: {success: true, deviceCount: 1, status: 200}
 📹 Found 1 online cameras
