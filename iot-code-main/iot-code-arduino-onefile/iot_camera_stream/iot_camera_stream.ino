@@ -4,24 +4,32 @@
  * 
  * Features:
  * - 720p (1280x720) resolution at 30 FPS target
- * - JPEG Quality 4 (high quality, low compression)
+ * - JPEG Quality optimization with PSRAM support
  * - Triple buffering with PSRAM optimization
  * - Real-time performance monitoring
- * - Optimized WiFi and camera sensor settings
- * - Advanced frame timing and throughput management
+ * - Modular architecture for maintainability
+ * - Advanced retry logic and fallback servers
  * 
  * Hardware: ESP32-S3 + OV5640 Camera Module + PSRAM
  * 
- * Code Structure:
- * - config.h: All configuration constants and pin definitions
- * - camera_network.h: Camera and network function implementations
+ * File Structure:
+ * - config.h: Configuration constants and pin definitions
+ * - globals.h: Global variables and external declarations
+ * - wifi_manager.h/.cpp: WiFi and network management
+ * - camera_manager.h/.cpp: Camera operations and frame handling
  * - iot_camera_stream.ino: Main program logic and performance monitoring
  */
 
 #include "config.h"
-#include "camera_network.h"
+#include "globals.h"
+#include "wifi_manager.h"
+#include "camera_manager.h"
 
-// Global objects
+// ===========================
+// Global Variable Definitions
+// ===========================
+
+// HTTP Objects
 HTTPClient http;
 WiFiClient client;
 
@@ -39,8 +47,20 @@ uint32_t totalBytes = 0;
 bool deviceRegistered = false;
 
 // WiFi management
-static unsigned long lastWiFiCheck = 0;
-static unsigned long lastReconnectAttempt = 0;
+unsigned long lastWiFiCheck = 0;
+unsigned long lastReconnectAttempt = 0;
+
+// Thermal Management Variables
+unsigned long lastTemperatureCheck = 0;
+float currentTemperature = 25.0;  // Initialize to room temperature
+float temperatureHistory[TEMPERATURE_AVERAGING_SAMPLES] = {25.0}; // Initialize all to room temp
+int temperatureHistoryIndex = 0;
+bool thermalThrottling = false;
+float thermalAdjustedFPS = TARGET_FPS;
+int thermalAdjustedQuality = JPEG_QUALITY_PSRAM;
+bool proactiveCoolingActive = false;
+bool startupCoolingPhase = AGGRESSIVE_COOLING_AT_STARTUP;
+unsigned long startupPhaseEndTime = 0;
 
 void setup() {
   // Initialize serial communication
@@ -63,6 +83,17 @@ void setup() {
     Serial.printf("- PSRAM: %d bytes\n", ESP.getPsramSize());
   } else {
     Serial.println("- PSRAM: Not found - using conservative settings");
+  }
+
+  // Initialize thermal management
+  if (AGGRESSIVE_COOLING_AT_STARTUP) {
+    startupPhaseEndTime = millis() + 120000; // 2 minutes of conservative settings
+    Serial.println("🚀 Startup cooling phase: 2 minutes of conservative settings for image stability");
+  }
+  
+  // Initialize temperature history
+  for (int i = 0; i < TEMPERATURE_AVERAGING_SAMPLES; i++) {
+    temperatureHistory[i] = 25.0; // Room temperature baseline
   }
 
   // Initialize subsystems
@@ -101,8 +132,11 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
   
-  // Frame capture and transmission
-  if (currentTime - lastFrameTime >= FRAME_INTERVAL_MS) {
+  // Calculate dynamic frame interval based on thermal conditions
+  unsigned long frameInterval = (1000.0 / thermalAdjustedFPS);
+  
+  // Frame capture and transmission with thermal adjustment
+  if (currentTime - lastFrameTime >= frameInterval) {
     captureAndSendFrame();
     lastFrameTime = currentTime;
   }
@@ -120,19 +154,7 @@ void loop() {
   }
   
   // WiFi connection monitoring
-  if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL_MS) {
-    if (WiFi.status() != WL_CONNECTED) {
-      if (currentTime - lastReconnectAttempt >= WIFI_RECONNECT_INTERVAL_MS) {
-        Serial.printf("WiFi disconnected (%s) - reconnecting...\n", 
-                      getWiFiStatusString(WiFi.status()).c_str());
-        initWiFi();
-        lastReconnectAttempt = currentTime;
-      }
-    } else {
-      lastReconnectAttempt = 0; // Reset reconnect timer
-    }
-    lastWiFiCheck = currentTime;
-  }
+  checkWiFiConnection();
   
   // Memory management and watchdog
   if (frameCount % GC_INTERVAL_FRAMES == 0) {
@@ -161,7 +183,11 @@ void printPerformanceStats() {
   Serial.println("📊 PERFORMANCE STATISTICS");
   Serial.println(String("=").substring(0, 50));
   Serial.printf("Runtime: %lu.%03lu seconds\n", runTime/1000, runTime%1000);
-  Serial.printf("FPS: %.2f (Target: %d)\n", actualFPS, TARGET_FPS);
+  Serial.printf("FPS: %.2f (Target: %d", actualFPS, TARGET_FPS);
+  if (thermalAdjustedFPS != TARGET_FPS) {
+    Serial.printf(", Thermal: %.1f", thermalAdjustedFPS);
+  }
+  Serial.printf(")\n");
   Serial.printf("Frames: Total=%lu, Success=%lu, Dropped=%lu\n", frameCount, successCount, dropCount);
   Serial.printf("Success Rate: %.1f%%\n", successRate);
   Serial.printf("Frame Size: %.1f KB avg\n", avgFrameSize/1024.0);
@@ -172,6 +198,15 @@ void printPerformanceStats() {
   }
   Serial.printf(" bytes\n");
   Serial.printf("Network: RSSI=%d dBm, CPU=%d MHz\n", WiFi.RSSI(), getCpuFrequencyMhz());
+  Serial.printf("Thermal: %.1f°C", currentTemperature);
+  if (thermalThrottling) {
+    Serial.printf(" (OPTIMIZED)");
+  } else if (proactiveCoolingActive) {
+    Serial.printf(" (PROACTIVE)");
+  } else if (startupCoolingPhase) {
+    Serial.printf(" (STARTUP)");
+  }
+  Serial.println();
   
   // Performance rating
   if (actualFPS >= 25.0) {
