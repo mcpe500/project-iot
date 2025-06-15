@@ -80,7 +80,6 @@ class SSHTunnel:
         except Exception as e:
             logger.error(f"Error loading private key: {e}")
             return None
-    
     def _handle_tunnel_connection(self, channel, origin, server):
         """Handle incoming connections through the tunnel"""
         try:
@@ -89,24 +88,32 @@ class SSHTunnel:
             # Connect to local service
             local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             local_socket.settimeout(10)
-            
             try:
                 local_socket.connect(('localhost', self.private_server_port))
                 logger.info(f"Connected to local service on port {self.private_server_port}")
             except Exception as e:
-                logger.error(f"Failed to connect to local service: {e}")
+                logger.error(f"Failed to connect to local service on port {self.private_server_port}: {e}")
+                logger.error(f"Make sure the FastAPI service is running on localhost:{self.private_server_port}")
                 channel.close()
                 local_socket.close()
                 return
             
-            # Create bidirectional data forwarding
+            # Create bidirectional data forwarding with better error handling
             def forward_data(source, destination, direction):
                 try:
+                    buffer_size = 4096
                     while True:
-                        data = source.recv(4096)
-                        if not data:
+                        try:
+                            data = source.recv(buffer_size)
+                            if not data:
+                                logger.debug(f"No more data to forward ({direction})")
+                                break
+                            destination.send(data)
+                        except socket.timeout:
+                            continue
+                        except (socket.error, OSError) as e:
+                            logger.debug(f"Socket error in forwarding ({direction}): {e}")
                             break
-                        destination.send(data)
                 except Exception as e:
                     logger.debug(f"Forwarding stopped ({direction}): {e}")
                 finally:
@@ -134,6 +141,8 @@ class SSHTunnel:
             # Wait for threads to complete
             thread1.join()
             thread2.join()
+            
+            logger.debug(f"Tunnel connection from {origin} closed")
             
         except Exception as e:
             logger.error(f"Error handling tunnel connection: {e}")
