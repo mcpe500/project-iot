@@ -138,21 +138,24 @@ class DataStore {
 
   // GPU-accelerated face recognition via Python service
   async performFaceRecognition(imageBuffer) {
+    const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+    const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
+
+    console.log(`[Face Recognition] Service URL: ${pythonServiceUrl}/recognize, Enabled: ${serviceEnabled}`);
+
+    if (!serviceEnabled) {
+      console.log('[Face Recognition] Service is disabled in configuration.');
+      return {
+        status: 'service_disabled',
+        recognizedAs: null,
+        error: 'Face recognition service is disabled.'
+      };
+    }
+
     try {
       const FormData = require('form-data');
+      // Ensure you have node-fetch installed: npm install node-fetch
       const { default: fetch } = await import('node-fetch');
-      
-      // Get Python service URL from environment
-      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
-      const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
-      
-      if (!serviceEnabled) {
-        console.log('Python GPU service disabled in configuration');
-        return {
-          status: 'service_disabled',
-          recognizedAs: null
-        };
-      }
       
       const form = new FormData();
       form.append('file', imageBuffer, {
@@ -160,57 +163,81 @@ class DataStore {
         contentType: 'image/jpeg'
       });
       
-      // Call Python GPU face recognition service
+      console.log(`[Face Recognition] Attempting to call Python GPU service at: ${pythonServiceUrl}/recognize`);
+
       const response = await fetch(`${pythonServiceUrl}/recognize`, {
         method: 'POST',
         body: form,
         headers: form.getHeaders(),
-        timeout: 5000 // 5 second timeout
+        timeout: 15000 // Increased timeout to 15 seconds
       });
       
+      console.log(`[Face Recognition] Response status from Python service: ${response.status}`);
+
       if (response.ok) {
         const result = await response.json();
+        console.log('[Face Recognition] Raw result from Python service:', result);
         
-        if (result.status === 'success' && result.recognized_faces && result.recognized_faces.length > 0) {
-          // Found recognized faces
-          const bestMatch = result.recognized_faces[0];
+        // Adapt based on the actual structure of a successful response from your Python service
+        // This structure assumes the Python service might return 'status', 'recognizedAs', 'confidence', 'faces_detected', 'processing_time'
+        // Or for older/different versions: 'status', 'recognized_faces' (array), 'faces_detected', 'processing_time'
+        if (result.status === 'permitted_face' || (result.status === 'success' && result.recognized_faces && result.recognized_faces.length > 0)) {
+          const faceName = result.recognizedAs || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].name : 'Unknown');
+          const confidence = result.confidence || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].confidence : null);
           return {
             status: 'recognized',
-            recognizedAs: bestMatch.name,
-            confidence: bestMatch.confidence,
+            recognizedAs: faceName,
+            confidence: confidence,
             faces_detected: result.faces_detected,
             processing_time: result.processing_time
           };
-        } else if (result.status === 'success' && result.faces_detected > 0) {
-          // Faces detected but not recognized
+        } else if (result.status === 'unknown_face' || (result.status === 'success' && result.faces_detected > 0 && (!result.recognized_faces || result.recognized_faces.length === 0))) {
           return {
             status: 'unknown_face',
             recognizedAs: null,
             faces_detected: result.faces_detected,
             processing_time: result.processing_time
           };
-        } else {
-          // No faces detected
-          return {
+        } else if (result.status === 'no_face_detected' || result.status === 'no_faces' || (result.status === 'success' && result.faces_detected === 0)) {
+           return {
             status: 'no_faces',
             recognizedAs: null,
             faces_detected: 0,
             processing_time: result.processing_time
           };
+        } else {
+            console.warn('[Face Recognition] Unexpected success response structure or status from Python service:', result);
+            return {
+                status: result.status || 'unexpected_response',
+                recognizedAs: null,
+                error: 'Unexpected response structure from recognition service.',
+                details: result
+            };
         }
       } else {
-        console.log('Face recognition service unavailable, response status:', response.status);
+        const errorBody = await response.text();
+        console.error(`[Face Recognition] Python service at ${pythonServiceUrl}/recognize returned error ${response.status}: ${errorBody}`);
         return {
-          status: 'service_unavailable',
-          recognizedAs: null
+          status: 'service_error',
+          recognizedAs: null,
+          error: `Recognition service returned ${response.status}`,
+          details: errorBody
         };
       }
-    } catch (error) {
-      console.log('Face recognition service error:', error.message);
+      
+    } catch (err) {
+      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${err.message}`, err);
+      if (err.name === 'AbortError' || err.message.toLowerCase().includes('timeout')) {
+        return {
+          status: 'service_timeout',
+          recognizedAs: null,
+          error: `Request to recognition service timed out: ${err.message}`
+        };
+      }
       return {
         status: 'service_error',
         recognizedAs: null,
-        error: error.message
+        error: `Failed to connect to recognition service: ${err.message}`
       };
     }
   }
