@@ -135,7 +135,8 @@ class DataStore:
                     logger.warning(f"No face found in {image_file}")
             except Exception as e:
                 logger.error(f"Error loading face from {image_file}: {e}")
-      async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
+    
+    async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
         """Perform face recognition on image bytes"""
         try:
             # Check if face_recognition library is available
