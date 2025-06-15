@@ -56,7 +56,7 @@ WiFiClient client;
 unsigned long lastFrameTime = 0;
 unsigned long lastHeartbeatTime = 0;
 unsigned long lastStatsTime = 0;
-const unsigned long frameInterval = 33; // 30 FPS target (1000ms/30 = 33ms)
+const unsigned long frameInterval = 100; // Start with 100ms = 10 FPS, can be adjusted
 const unsigned long heartbeatInterval = 30000; // 30 seconds
 const unsigned long statsInterval = 5000; // 5 seconds for performance stats
 bool deviceRegistered = false;
@@ -65,8 +65,6 @@ uint32_t successCount = 0;
 uint32_t dropCount = 0;
 uint32_t totalBytes = 0;
 unsigned long streamStartTime = 0;
-unsigned long adaptiveFrameInterval = 33; // Start with 30 FPS target
-unsigned long lastAdaptiveCheck = 0;
 
 void setup() {
   // Start with standard baud rate for stability
@@ -125,15 +123,9 @@ void loop() {
   unsigned long currentTime = millis();
   
   // Maintain target FPS by checking frame interval
-  if (currentTime - lastFrameTime >= adaptiveFrameInterval) {
+  if (currentTime - lastFrameTime >= frameInterval) {
     captureAndSendFrame();
     lastFrameTime = currentTime;
-  }
-  
-  // Adaptive frame rate control - check every 10 seconds
-  if (currentTime - lastAdaptiveCheck >= 10000) {
-    adaptFrameRate();
-    lastAdaptiveCheck = currentTime;
   }
   
   // Send heartbeat every 30 seconds
@@ -167,8 +159,8 @@ void loop() {
     lastWiFiCheck = currentTime;
   }
   
-  // No delay - run as fast as possible for best performance
-  yield(); // Just feed watchdog
+  // Small delay to prevent watchdog issues
+  delay(1);
 }
 
 void initWiFi() {
@@ -308,17 +300,16 @@ void initCamera() {
 
   // Optimize settings for PSRAM availability
   if (psramFound()) {
-    Serial.println("PSRAM found, optimizing for high-quality streaming...");
-    config.jpeg_quality = 4; // High quality (lower number = better quality)
-    config.fb_count = 3; // Triple buffering for smoother streaming
-    config.grab_mode = CAMERA_GRAB_LATEST; // Always get latest frame
-    Serial.println("Initial config: VGA, JPEG Quality: 4, Triple buffering");
+    Serial.println("PSRAM found, will upgrade to 720p after initialization...");
+    config.jpeg_quality = 8; // Better quality with PSRAM
+    config.fb_count = 2; // Double buffering
+    Serial.println("Initial config: VGA, JPEG Quality: 8, Double buffering");
   } else {
     Serial.println("PSRAM not found, staying with VGA for stability...");
     config.fb_location = CAMERA_FB_IN_DRAM;
-    config.jpeg_quality = 8; // Better quality than before
-    config.fb_count = 2; // Double buffering
-    Serial.println("Fallback: VGA (640x480), JPEG Quality: 8, Double buffering");
+    config.jpeg_quality = 12;
+    config.fb_count = 1;
+    Serial.println("Fallback: VGA (640x480), JPEG Quality: 12, Single buffering");
   }
 
   // Initialize camera
@@ -357,22 +348,19 @@ void initCamera() {
       
       // Upgrade to HD settings
       s->set_framesize(s, FRAMESIZE_HD);
-      s->set_quality(s, 4); // High quality for 720p
+      s->set_quality(s, 6); // Better quality for 720p
       
-      // Apply advanced settings for 720p high quality
+      // Apply advanced settings for 720p
       s->set_contrast(s, 1);       // Slightly increased for clarity
-      s->set_saturation(s, 1);     // Enhanced color saturation
-      s->set_sharpness(s, 2);      // Increased sharpness
-      s->set_gainceiling(s, (gainceiling_t)6);  // Higher gain ceiling for better low light
+      s->set_gainceiling(s, (gainceiling_t)4);  // Gain ceiling for low noise
       s->set_bpc(s, 1);            // Black pixel correction
       s->set_wpc(s, 1);            // White pixel correction
       s->set_raw_gma(s, 1);        // Gamma correction
       s->set_lenc(s, 1);           // Lens correction
       s->set_dcw(s, 1);            // Downscale enable
-      s->set_aec_value(s, 300);    // Optimized exposure value
-      s->set_ae_level(s, 2);       // Auto exposure level
+      s->set_aec_value(s, 400);    // Manual exposure value
       
-      Serial.println("Camera upgraded to 720p with enhanced high-quality settings");
+      Serial.println("Camera upgraded to 720p with enhanced settings");
     }
   } else {
     Serial.println("Failed to get camera sensor handle");
@@ -414,13 +402,13 @@ void captureAndSendFrame() {
   if (success) {
     successCount++;
     totalBytes += fb->len;
-    if (frameCount % 30 == 0) { // Print every 30th frame to reduce spam
+    if (frameCount % 10 == 0) { // Print every 10th frame to reduce spam
       Serial.printf("✓ Frame #%lu: %lu bytes, Capture: %lums, Send: %lums\n", 
                     frameCount, fb->len, captureTime, sendTime);
     }
   } else {
     dropCount++;
-    if (frameCount % 10 == 0) { // Print every 10th failure
+    if (frameCount % 5 == 0) { // Print every 5th failure
       Serial.printf("✗ Frame #%lu failed (Size: %lu bytes)\n", frameCount, fb->len);
     }
   }
@@ -440,15 +428,11 @@ bool sendFrameToServer(camera_fb_t * fb) {
     return false;
   }
 
-  // Only log frame size occasionally to reduce serial overhead
-  if (frameCount % 100 == 0) {
-    Serial.printf("Sending frame of size: %d bytes\n", fb->len);
-  }
+  Serial.printf("Sending frame of size: %d bytes\n", fb->len);
 
   http.begin(client, server_url);
   http.addHeader("X-API-Key", api_key);
-  http.setTimeout(5000); // Reduced timeout for faster failure detection
-  http.setReuse(true); // Enable connection reuse
+  http.setTimeout(10000); // 10 second timeout for stability
   
   // Create boundary
   String boundary = "----ESP32CAMFormBoundary";
@@ -461,10 +445,7 @@ bool sendFrameToServer(camera_fb_t * fb) {
   String footer = "\r\n--" + boundary + "--\r\n";
   
   size_t totalLength = header.length() + fb->len + footer.length();
-  // Only log payload size occasionally
-  if (frameCount % 100 == 0) {
-    Serial.printf("Total payload size: %d bytes\n", totalLength);
-  }
+  Serial.printf("Total payload size: %d bytes\n", totalLength);
   
   // Try to allocate memory for complete payload
   uint8_t* payload = (uint8_t*)malloc(totalLength);
@@ -490,15 +471,10 @@ bool sendFrameToServer(camera_fb_t * fb) {
     
     if (httpResponseCode > 0) {
       String response = http.getString();
-      // Only log successful responses occasionally
-      if (frameCount % 100 == 0) {
-        Serial.printf("HTTP Response Code: %d\n", httpResponseCode);
-      }
+      Serial.printf("HTTP Response Code: %d\n", httpResponseCode);
       
       if (httpResponseCode == 200) {
-        if (frameCount % 100 == 0) {
-          Serial.println("Frame uploaded successfully");
-        }
+        Serial.println("Frame uploaded successfully");
         http.end();
         return true;
       } else {
@@ -545,15 +521,10 @@ bool sendFrameToServer(camera_fb_t * fb) {
         // The response code is already available from sendRequest
         String response = http.getString();
         
-        // Only log responses occasionally
-        if (frameCount % 100 == 0) {
-          Serial.printf("HTTP Response Code: %d\n", httpResponseCode);
-        }
+        Serial.printf("HTTP Response Code: %d\n", httpResponseCode);
         
         if (httpResponseCode == 200) {
-          if (frameCount % 100 == 0) {
-            Serial.println("Frame uploaded successfully (stream method)");
-          }
+          Serial.println("Frame uploaded successfully (stream method)");
           http.end();
           return true;
         } else {
@@ -673,7 +644,7 @@ void printPerformanceStats() {
     Serial.println("📊 PERFORMANCE STATISTICS");
     Serial.println(String("=").substring(0, 50));
     Serial.printf("Runtime: %lu.%03lu seconds\n", runTime/1000, runTime%1000);
-    Serial.printf("Adaptive FPS: %.2f (Interval: %lums)\n", 1000.0/adaptiveFrameInterval, adaptiveFrameInterval);
+    Serial.printf("Current FPS: %.2f (Target: adjustable)\n", actualFPS);
     Serial.printf("Frames: Total=%lu, Success=%lu, Dropped=%lu\n", frameCount, successCount, dropCount);
     Serial.printf("Success Rate: %.1f%%\n", successRate);
     Serial.printf("Avg Frame Size: %.1f KB (%.0f bytes)\n", avgFrameSize/1024.0, avgFrameSize);
@@ -698,31 +669,6 @@ void printPerformanceStats() {
     
     Serial.println(String("=").substring(0, 50) + "\n");
   }
-}
-
-// Adaptive frame rate control based on performance
-void adaptFrameRate() {
-  if (frameCount < 50) return; // Need some data first
-  
-  float successRate = (float)successCount * 100.0 / frameCount;
-  float currentFPS = 1000.0 / adaptiveFrameInterval;
-  
-  if (successRate < 70.0 && adaptiveFrameInterval < 200) {
-    // Poor success rate - reduce frame rate
-    adaptiveFrameInterval += 10;
-    Serial.printf("📉 Reducing frame rate: Success rate %.1f%% - New interval: %lums (%.1f FPS)\n", 
-                  successRate, adaptiveFrameInterval, 1000.0/adaptiveFrameInterval);
-  } else if (successRate > 90.0 && adaptiveFrameInterval > 25) {
-    // Good success rate - try to increase frame rate
-    adaptiveFrameInterval -= 5;
-    Serial.printf("📈 Increasing frame rate: Success rate %.1f%% - New interval: %lums (%.1f FPS)\n", 
-                  successRate, adaptiveFrameInterval, 1000.0/adaptiveFrameInterval);
-  }
-  
-  // Reset counters for next measurement period
-  frameCount = 0;
-  successCount = 0;
-  dropCount = 0;
 }
 
 // Helper function to decode WiFi status codes
