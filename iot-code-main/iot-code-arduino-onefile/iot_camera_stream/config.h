@@ -16,9 +16,14 @@
 // ===========================
 // Server Configuration
 // ===========================
-#define SERVER_URL "http://203.175.11.145:9005/api/v1/stream/stream"
-#define REGISTER_URL "http://203.175.11.145:9005/api/v1/devices/register"
-#define HEARTBEAT_URL "http://203.175.11.145:9005/api/v1/devices/heartbeat"
+#define SERVER_HOST "203.175.11.145" // <<< ADD THIS
+#define SERVER_PORT 9005             // <<< ADD THIS
+#define SERVER_PATH "/api/v1/stream/stream" // <<< ADD THIS
+
+// This URL is now built from the parts above, which is cleaner
+#define SERVER_URL "http://" SERVER_HOST ":" "9005" SERVER_PATH
+#define REGISTER_URL "http://" SERVER_HOST ":" "9005" "/api/v1/devices/register"
+#define HEARTBEAT_URL "http://" SERVER_HOST ":" "9005" "/api/v1/devices/heartbeat"
 #define API_KEY "dev-api-key-change-in-production"
 
 // Fallback/Alternative Servers
@@ -55,7 +60,7 @@
 // ===========================
 // Performance Configuration
 // ===========================
-#define TARGET_FPS 10
+#define TARGET_FPS 15 // <<< SET A REALISTIC TARGET FOR RAW STREAMING
 #define FRAME_INTERVAL_MS (1000 / TARGET_FPS)
 #define HEARTBEAT_INTERVAL_MS 30000
 #define STATS_INTERVAL_MS 5000
@@ -84,13 +89,12 @@
 #define MAX_CPU_FREQ_MHZ 240
 #define XCLK_FREQ_HZ 20000000
 
-// Quality settings
-#define JPEG_QUALITY_PSRAM 30
-#define JPEG_QUALITY_DRAM 40
-#define JPEG_QUALITY_INITIAL 35
+// --- RAW PIXEL STREAMING - JPEG QUALITY NO LONGER USED ---
+// We are sending raw RGB565 pixels, not JPEG compressed data
+// This eliminates the slow compression step entirely
 
-// Buffer settings
-#define FB_COUNT_PSRAM 3
+// Buffer settings - optimized for raw streaming
+#define FB_COUNT_PSRAM 3  // Use 3 buffers for maximum throughput
 #define FB_COUNT_DRAM 1
 
 // ===========================

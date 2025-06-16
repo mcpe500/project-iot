@@ -10,7 +10,7 @@
 // ===========================
 
 void initCamera() {
-  Serial.println("Initializing OV5640 camera for 800x600 High-Speed Stream...");
+  Serial.println("Initializing OV5640 camera for RAW 800x600 STREAMING...");
   
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -33,23 +33,21 @@ void initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = XCLK_FREQ_HZ;
   
-  // config.frame_size = FRAMESIZE_960X540; // <<< SET TO 960x540 RESOLUTION
-  config.frame_size = FRAMESIZE_SVGA; // <<< SET TO 800x600 RESOLUTION
-  config.pixel_format = PIXFORMAT_JPEG;
+  // --- CRITICAL CHANGES FOR HIGH FPS RAW STREAMING ---
+  config.frame_size = FRAMESIZE_SVGA;      // 800x600 resolution
+  config.pixel_format = PIXFORMAT_RGB565;  // Send raw pixels, NOT JPEG
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-  config.jpeg_quality = JPEG_QUALITY_INITIAL;
-  config.fb_count = FB_COUNT_DRAM;
 
   // Optimize for PSRAM
   if (psramFound()) {
     config.fb_location = CAMERA_FB_IN_PSRAM;
-    config.jpeg_quality = JPEG_QUALITY_PSRAM;
     config.fb_count = FB_COUNT_PSRAM;
-    Serial.println("PSRAM found - using 800x600 optimized settings");
+    Serial.println("PSRAM found - using RAW optimized settings");
   } else {
+    // Note: Raw streaming without PSRAM is extremely difficult
     config.fb_location = CAMERA_FB_IN_DRAM;
-    config.jpeg_quality = JPEG_QUALITY_DRAM;
-    Serial.println("No PSRAM - using conservative settings");
+    config.fb_count = FB_COUNT_DRAM;
+    Serial.println("WARNING: No PSRAM - raw streaming performance will be severely limited");
   }
 
   esp_err_t err = esp_camera_init(&config);
@@ -60,15 +58,12 @@ void initCamera() {
     return;
   }
 
-  Serial.println("Camera initialized successfully!");
+  Serial.println("Camera initialized successfully for RAW streaming!");
 
   // Configure sensor
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    // s->set_framesize(s, FRAMESIZE_960X540);  // <<< ENSURE 960x540 IS SET
-    s->set_framesize(s, FRAMESIZE_SVGA);  // <<< ENSURE 800x600 IS SET
-    
-    s->set_quality(s, JPEG_QUALITY_PSRAM);    // Use our new lower quality setting
+    s->set_framesize(s, FRAMESIZE_SVGA);  // Lock to SVGA
     s->set_brightness(s, 0);
     s->set_contrast(s, 0);
     s->set_saturation(s, 0);
@@ -77,22 +72,7 @@ void initCamera() {
     s->set_exposure_ctrl(s, 1);
     s->set_gain_ctrl(s, 1);
     
-    // Upgrade to 720p if PSRAM available
-    if (psramFound()) {
-      // delay(2000);
-      // Serial.println("Upgrading to 720p...");
-      // s->set_framesize(s, FRAMESIZE_HD);  // Enable 720p for PSRAM systems
-      s->set_quality(s, JPEG_QUALITY_PSRAM);
-      // s->set_contrast(s, 1);
-      // s->set_gainceiling(s, (gainceiling_t)4);
-      // s->set_bpc(s, 1);
-      // s->set_wpc(s, 1);
-      // s->set_raw_gma(s, 1);
-      // s->set_lenc(s, 1);
-      // s->set_dcw(s, 1);
-      // s->set_aec_value(s, 400);
-      // Serial.println("Camera upgraded to 720p");
-    }
+    Serial.println("Camera configured for optimal RAW streaming");
   }
 }
 
@@ -203,51 +183,65 @@ bool sendFrameWithRetry(camera_fb_t* fb) {
   return false;
 }
 
-// This new version uses the HTTPClient's built-in streaming capabilities
-// for a non-blocking upload, which is far more efficient.
+// This new version sends raw pixel data with custom headers for backend processing
 bool sendFrameToURL(camera_fb_t* fb, const char* url, int timeout_ms) {
-    if (!fb || fb->len == 0 || !url) return false;
+    if (!fb || fb->len == 0) return false;
     if (WiFi.status() != WL_CONNECTED) return false;
 
-    http.begin(client, url);
-    http.addHeader("X-API-Key", API_KEY);
-    
-    String boundary = "----ESP32CAMBoundary";
-    http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-
-    String header = "--" + boundary + "\r\n"
-                    "Content-Disposition: form-data; name=\"image\"; filename=\"frame.jpg\"\r\n"
-                    "Content-Type: image/jpeg\r\n\r\n";
-    String footer = "\r\n--" + boundary + "--\r\n";
-    
-    size_t totalLength = header.length() + fb->len + footer.length();
-
-    // Start the request and send the first part (the multipart header)
-    // The HTTPClient library will handle sending the rest as a stream.
-    int httpCode = http.sendRequest("POST", (uint8_t*)header.c_str(), header.length());
-    
-    // If the server is ready to receive the file, stream the data
-    if (httpCode == HTTP_CODE_CONTINUE) {
-        // Stream the image buffer itself
-        client.write(fb->buf, fb->len);
-        // Stream the multipart form footer
-        client.print(footer);
-    } else {
+    // Connect to the server using the defined host and port
+    if (!client.connect(SERVER_HOST, SERVER_PORT)) {
         if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-            Serial.printf("HTTP Error on starting request: %s\n", http.errorToString(httpCode).c_str());
+            Serial.println("Connection to server failed!");
         }
-        http.end();
         return false;
     }
 
-    // Get the final response from the server after all data has been sent
-    bool success = (httpCode == 200);
+    // --- Manually construct all HTTP headers for a raw binary stream ---
+    client.print("POST " + String(SERVER_PATH) + " HTTP/1.1\r\n");
+    client.print("Host: " + String(SERVER_HOST) + "\r\n");
+    client.print("X-API-Key: " + String(API_KEY) + "\r\n");
+    
+    // This tells the server it's receiving a raw blob of data
+    client.print("Content-Type: application/octet-stream\r\n");
+    
+    // Custom headers to tell the backend how to interpret the raw data
+    client.print("X-Frame-Format: RGB565\r\n");
+    client.print("X-Frame-Width: " + String(fb->width) + "\r\n");
+    client.print("X-Frame-Height: " + String(fb->height) + "\r\n");
+    
+    client.print("Content-Length: " + String(fb->len) + "\r\n");
+    client.print("Connection: close\r\n");
+    client.print("\r\n"); // An empty line signifies the end of the headers
 
-    if (!success && frameCount % FAILURE_LOG_INTERVAL == 0) {
-        Serial.printf("HTTP Error on final response: %d - %s\n", httpCode, http.errorToString(httpCode).c_str());
+    // --- Send the raw pixel data directly ---
+    if (client.write(fb->buf, fb->len) != fb->len) {
+        if (frameCount % FAILURE_LOG_INTERVAL == 0) {
+            Serial.println("Failed to send frame buffer.");
+        }
+        client.stop();
+        return false;
     }
 
-    http.end();
+    // --- Wait for the server's response ---
+    unsigned long responseTimeout = millis();
+    while (client.connected() && !client.available() && millis() - responseTimeout < timeout_ms) {
+        delay(10);
+    }
+    
+    bool success = false;
+    if (client.available()) {
+        String line = client.readStringUntil('\n');
+        if (line.indexOf("200 OK") > 0) {
+            success = true;
+        } else if (frameCount % FAILURE_LOG_INTERVAL == 0) {
+            Serial.printf("HTTP Error: Unexpected response: %s\n", line.c_str());
+        }
+    } else if (frameCount % FAILURE_LOG_INTERVAL == 0) {
+        Serial.println("HTTP Response Timeout");
+    }
+
+    // Cleanly close the connection
+    client.stop();
     return success;
 }
 
@@ -333,7 +327,6 @@ void checkThermalConditions() {
         Serial.println("🚀 Startup phase: Using conservative settings for stable quality");
         thermalThrottling = true;
         thermalAdjustedFPS = TARGET_FPS * 0.8;
-        thermalAdjustedQuality = JPEG_QUALITY_PSRAM + 1;
         applyThermalOptimizations(currentTemperature);
       }
       return;
@@ -365,7 +358,6 @@ void checkThermalConditions() {
       
       // Aggressive thermal management
       thermalAdjustedFPS = TARGET_FPS * 0.6; // More aggressive FPS reduction
-      thermalAdjustedQuality = JPEG_QUALITY_PSRAM + 3; // Lower compression for quality
       
       applyThermalOptimizations(currentTemperature);
       
@@ -382,7 +374,6 @@ void checkThermalConditions() {
     
     // Moderate thermal management
     thermalAdjustedFPS = TARGET_FPS * THERMAL_FPS_REDUCTION_FACTOR;
-    thermalAdjustedQuality = JPEG_QUALITY_PSRAM + THERMAL_QUALITY_ADJUSTMENT;
     
     applyThermalOptimizations(currentTemperature);
   }
@@ -393,7 +384,6 @@ void checkThermalConditions() {
       
       // Light proactive optimizations
       thermalAdjustedFPS = TARGET_FPS * 0.9; // Slight FPS reduction
-      thermalAdjustedQuality = JPEG_QUALITY_PSRAM; // Keep quality but optimize sensors
       
       applyProactiveOptimizations();
     }
@@ -448,9 +438,6 @@ void applyThermalOptimizations(float temperature) {
   s->set_contrast(s, 2);  // Slightly higher contrast to compensate for quality loss
   s->set_saturation(s, 1); // Maintain good saturation
   
-  // Adjust quality dynamically
-  s->set_quality(s, thermalAdjustedQuality);
-  
   // If temperature is very high, temporarily reduce resolution
   if (temperature >= TEMPERATURE_THRESHOLD_CRITICAL) {
     Serial.println("📉 Reducing resolution to VGA for cooling");
@@ -485,22 +472,18 @@ void applyProactiveOptimizations() {
   s->set_brightness(s, 0);
   s->set_contrast(s, 1);
   s->set_saturation(s, 0);
-  s->set_quality(s, thermalAdjustedQuality);
 }
 
 void resetCameraToOptimalSettings() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
   
-  Serial.println("🔄 Resetting camera to optimal 800x600 settings");
+  Serial.println("🔄 Resetting camera to optimal RAW 800x600 settings");
   
   thermalAdjustedFPS = TARGET_FPS;
-  thermalAdjustedQuality = JPEG_QUALITY_PSRAM;
   
   // ENSURE WE RESET TO THE CORRECT RESOLUTION
-  // s->set_framesize(s, FRAMESIZE_960X540);
   s->set_framesize(s, FRAMESIZE_SVGA);
-  s->set_quality(s, JPEG_QUALITY_PSRAM);
   
   // Restore optimal sensor settings
   s->set_gainceiling(s, (gainceiling_t)4);

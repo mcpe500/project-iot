@@ -6,6 +6,7 @@ const fsp = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
+const sharp = require('sharp'); // <<< ADD SHARP LIBRARY
 
 const { dataDir, recordingsDir } = require('./dataStore');
 
@@ -141,66 +142,90 @@ function setupRoutes(app, dataStore, wss) {
     res.json({ message: 'Data received', data: savedData });
   });
 
-  // Stream endpoint with face recognition
-  app.post('/api/v1/stream/stream', streamUpload.single('image'), async (req, res) => {
-    if (!req.file) {
-      console.log('[Stream API] No image provided in request');
-      return res.status(400).json({ error: 'No image provided' });
-    }
-
-    const timestamp = Date.now();
-    const deviceId = req.body.deviceId || 'unknown_device';
-    const filename = `${deviceId}_${timestamp}.jpg`;
-    const filePath = path.join(dataDir, filename);
-
-    console.log(`[Stream API] Received frame from device: ${deviceId}, timestamp: ${timestamp}`);
-
-    try {
-      // Save the image to the data directory
-      await fsp.writeFile(filePath, req.file.buffer);
-      console.log('[Stream API] Frame saved:', filePath);
-
-      // Perform face recognition
-      console.log('[Stream API] Initiating face recognition for frame:', filename);
-      const recognition = await dataStore.performFaceRecognition(req.file.buffer);
-      console.log('[Stream API] Face recognition result for frame ', filename, ':', JSON.stringify(recognition));
+  // Stream endpoint with RAW pixel processing and face recognition
+  app.post('/api/v1/stream/stream', 
+    // Use Express's raw body parser for this route ONLY.
+    // It will read the incoming binary data into req.body as a Buffer.
+    express.raw({ type: 'application/octet-stream', limit: '4mb' }), 
+    async (req, res) => {
       
-      // Broadcast to WebSocket clients
-      const wsMessage = {
-        type: 'new_frame',
-        deviceId,
-        timestamp,
-        filename,
-        url: `/data/${filename}`,
-        recognition: {
-          status: recognition.status,
+      // Get frame metadata from the custom headers sent by the ESP32
+      const width = parseInt(req.headers['x-frame-width'], 10);
+      const height = parseInt(req.headers['x-frame-height'], 10);
+      const format = req.headers['x-frame-format']; // e.g., "RGB565"
+
+      if (!width || !height || !format || !req.body || req.body.length === 0) {
+        console.log('[Stream API] Bad request: Missing headers or empty body');
+        return res.status(400).json({ error: 'Missing frame metadata headers or body' });
+      }
+
+      const timestamp = Date.now();
+      // deviceId would now need to be part of the URL or a header if needed, as there's no form body to parse
+      const deviceId = req.headers['x-device-id'] || 'unknown_device';
+      const filename = `${deviceId}_${timestamp}.jpg`;
+      const filePath = path.join(dataDir, filename);
+
+      console.log(`[Stream API] Received RAW frame from ${deviceId}: ${width}x${height}, Format: ${format}, Size: ${req.body.length} bytes`);
+
+      try {
+        // --- IMAGE PROCESSING ON THE BACKEND USING SHARP ---
+        // This is where the magic happens. We convert the raw pixel buffer into a high-quality JPEG.
+        const jpegBuffer = await sharp(req.body, {
+          raw: {
+            width: width,
+            height: height,
+            channels: 2, // For RGB565, sharp interprets it as 2 channels (16 bits total)
+          },
+        })
+        .jpeg({ quality: 90 }) // Create a high-quality JPEG for saving/display
+        .toBuffer();
+
+        // Save the newly created JPEG image
+        await fsp.writeFile(filePath, jpegBuffer);
+        console.log('[Stream API] Raw frame converted and saved as JPEG:', filePath);
+
+        // Now, perform face recognition on the clean, high-quality JPEG buffer
+        console.log('[Stream API] Initiating face recognition for converted frame:', filename);
+        const recognition = await dataStore.performFaceRecognition(jpegBuffer);
+        console.log('[Stream API] Face recognition result for frame ', filename, ':', JSON.stringify(recognition));
+        
+        // Broadcast to WebSocket clients
+        const wsMessage = {
+          type: 'new_frame',
+          deviceId,
+          timestamp,
+          filename,
+          url: `/data/${filename}`,
+          recognition: {
+            status: recognition.status,
+            recognizedAs: recognition.recognizedAs,
+            confidence: recognition.confidence,
+            error: recognition.error
+          }
+        };
+        
+        console.log('[Stream API] Broadcasting WebSocket message:', JSON.stringify(wsMessage));
+        wss.clients.forEach(client => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(wsMessage));
+          }
+        });
+
+        res.json({ 
+          message: 'Raw frame received and processed successfully', 
+          filename: filename,
+          recognitionStatus: recognition.status,
           recognizedAs: recognition.recognizedAs,
-          confidence: recognition.confidence, // Make sure to include confidence if available
-          error: recognition.error // Include error details if any
-        }
-      };
-      
-      console.log('[Stream API] Broadcasting WebSocket message:', JSON.stringify(wsMessage));
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(wsMessage));
-        }
-      });
+          confidence: recognition.confidence,
+          error: recognition.error
+        });
 
-      res.json({ 
-        message: 'Frame received', 
-        filename: filename,
-        recognitionStatus: recognition.status, 
-        recognizedAs: recognition.recognizedAs,
-        confidence: recognition.confidence,
-        error: recognition.error
-      });
-
-    } catch (err) {
-      console.error('[Stream API] Error processing frame:', err.message, err.stack);
-      res.status(500).json({ error: 'Failed to process frame', details: err.message });
+      } catch (err) {
+        console.error('[Stream API] Error processing raw frame:', err.message, err.stack);
+        res.status(500).json({ error: 'Failed to process raw frame', details: err.message });
+      }
     }
-  });
+  );
 
   // Record video from last 30 seconds of frames
   app.post('/api/v1/stream/record', async (req, res) => {

@@ -57,7 +57,6 @@ float temperatureHistory[TEMPERATURE_AVERAGING_SAMPLES] = {25.0}; // Initialize 
 int temperatureHistoryIndex = 0;
 bool thermalThrottling = false;
 float thermalAdjustedFPS = TARGET_FPS;
-int thermalAdjustedQuality = JPEG_QUALITY_PSRAM;
 bool proactiveCoolingActive = false;
 bool startupCoolingPhase = AGGRESSIVE_COOLING_AT_STARTUP;
 unsigned long startupPhaseEndTime = 0;
