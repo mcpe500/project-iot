@@ -1,0 +1,959 @@
+this is `iot-image\api_routes.py` : 
+```
+# api_routes.py
+import logging
+import time
+from pathlib import Path
+from typing import Optional
+
+from fastapi import (APIRouter, File, Form, HTTPException, Request,
+                     UploadFile)
+from fastapi.responses import JSONResponse
+
+from config import DATA_DIR, PERMITTED_FACES_DIR, face_recognition_available
+from data_store import data_store
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/v1")
+
+
+@router.post("/devices/register")
+async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = Form(...)):
+    try:
+        device_data = {'id': deviceId, 'name': deviceName, 'status': 'online'}
+        registered_device = data_store.register_device(device_data)
+        return JSONResponse(content={"success": True, "device": registered_device})
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/stream/stream")
+async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown")):
+    contents = await image.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty image file.")
+    
+    result = await data_store.perform_face_recognition(contents)
+    result["deviceId"] = deviceId
+    return JSONResponse(content=result)
+
+
+@router.post("/recognition/add-permitted-face")
+async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...)):
+    if not face_recognition_available:
+        raise HTTPException(status_code=501, detail="Face recognition feature not available.")
+
+    safe_name = "".join(c for c in name if c.isalnum() or c in (' ', '.', '_')).rstrip()
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Invalid name provided.")
+        
+    extension = Path(image.filename).suffix or ".jpg"
+    file_path = PERMITTED_FACES_DIR / f"{safe_name}{extension}"
+    
+    contents = await image.read()
+    with open(file_path, "wb") as f:
+        f.write(contents)
+    
+    logger.info(f"Saved new permitted face '{name}' to {file_path}")
+    data_store.load_permitted_faces() # Reload faces
+    
+    return JSONResponse(content={"success": True, "message": f"Permitted face '{name}' added."})
+
+
+@router.get("/devices")
+async def get_all_devices_endpoint():
+    devices_list = data_store.get_all_devices()
+    return JSONResponse(content={"success": True, "devices": devices_list})
+
+# A simple root endpoint for the router
+@router.get("/")
+async def api_root():
+    return {"message": "API v1 is active"}
+```
+
+this is my `iot-image\config.py` : 
+```
+# config.py
+import logging
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# --- Core Configuration ---
+HOST = os.getenv('HOST', '0.0.0.0')
+PORT = int(os.getenv('PORT', '9001'))
+RELOAD_DEBUG = os.getenv('RELOAD_DEBUG', 'False').lower() == 'true'
+UVICORN_LOG_LEVEL = os.getenv('UVICORN_LOG_LEVEL', 'info').lower()
+
+# --- Logging Configuration ---
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# --- Directory Paths ---
+# Assumes this config.py is in a subdirectory (e.g., 'src'), so we go up one level.
+# Change if your file structure is different.
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+RECORDINGS_DIR = BASE_DIR / "recordings"
+PERMITTED_FACES_DIR = BASE_DIR / "permitted_faces"
+
+# Create directories on startup
+for directory in [DATA_DIR, RECORDINGS_DIR, PERMITTED_FACES_DIR]:
+    directory.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured directory exists: {directory}")
+
+# --- SSH Tunnel Configuration ---
+SSH_HOST = os.getenv("PUBLIC_VPS_IP")
+SSH_CONNECTION_PORT = int(os.getenv("SSH_SERVER_PORT", "22"))
+SSH_USER = os.getenv("SSH_USER")
+SSH_PASSWORD = os.getenv("SSH_PASSWORD")
+SSH_PUBLIC_PORT = int(os.getenv('PUBLIC_PORT', '9009'))
+SSH_PRIVATE_PORT = int(os.getenv('PRIVATE_SERVER_PORT') or PORT)
+
+# --- Optional Library Availability ---
+try:
+    import cv2
+    cv2_available = True
+except ImportError:
+    cv2 = None
+    cv2_available = False
+
+try:
+    import numpy as np
+    numpy_available = True
+except ImportError:
+    np = None
+    numpy_available = False
+
+try:
+    import face_recognition
+    face_recognition_available = True
+except ImportError:
+    face_recognition = None
+    face_recognition_available = False
+    
+try:
+    import uvicorn
+    uvicorn_available = True
+except ImportError:
+    uvicorn = None
+    uvicorn_available = False
+
+logger.info(f"Logging initialized with level: {LOG_LEVEL}")
+logger.info(f"OpenCV (cv2) available: {cv2_available}")
+logger.info(f"NumPy (np) available: {numpy_available}")
+logger.info(f"face_recognition available: {face_recognition_available}")
+```
+
+this is my `iot-image\data_store.py` : 
+```
+# data_store.py
+import logging
+import time
+from typing import Any, Dict, List, Optional
+
+# Import dependencies and config variables from the config module
+from config import (PERMITTED_FACES_DIR, cv2, cv2_available,
+                    face_recognition, face_recognition_available, np,
+                    numpy_available)
+
+logger = logging.getLogger(__name__)
+
+class DataStore:
+    def __init__(self):
+        self.devices: Dict[str, Dict[str, Any]] = {}
+        self.permitted_face_encodings: List[Any] = []
+        self.permitted_face_names: List[str] = []
+        logger.info("DataStore initialized.")
+
+    def load_permitted_faces(self):
+        logger.info("Loading permitted faces...")
+        self.permitted_face_encodings.clear()
+        self.permitted_face_names.clear()
+
+        if not all([face_recognition_available, cv2_available, numpy_available]):
+            logger.warning("A required library (face_recognition, cv2, or numpy) is not available. Skipping face loading.")
+            return
+
+        if not PERMITTED_FACES_DIR.exists():
+            logger.warning(f"Permitted faces directory does not exist: {PERMITTED_FACES_DIR}")
+            return
+            
+        loaded_count = 0
+        for image_path in PERMITTED_FACES_DIR.glob("*.[jp][pn]g"):
+            try:
+                image = face_recognition.load_image_file(str(image_path))
+                encodings = face_recognition.face_encodings(image)
+                if encodings:
+                    self.permitted_face_encodings.append(encodings[0])
+                    self.permitted_face_names.append(image_path.stem)
+                    loaded_count += 1
+                    logger.info(f"Loaded permitted face: {image_path.stem}")
+                else:
+                    logger.warning(f"No face found in {image_path.name}")
+            except Exception as e:
+                logger.error(f"Failed to process {image_path.name}: {e}", exc_info=True)
+        
+        logger.info(f"Finished loading permitted faces. Total loaded: {loaded_count}")
+
+    async def perform_face_recognition(self, image_bytes: bytes) -> Dict[str, Any]:
+        if not all([face_recognition_available, cv2_available, numpy_available]):
+            return {"status": "error", "message": "Face recognition feature not available."}
+        
+        try:
+            image_array = np.frombuffer(image_bytes, np.uint8)
+            image_bgr = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+            if image_bgr is None:
+                raise ValueError("Failed to decode image.")
+            
+            # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
+            image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+
+            face_locations = face_recognition.face_locations(image_rgb)
+            if not face_locations:
+                return {"status": "no_face_detected", "faces_detected": 0}
+
+            face_encodings = face_recognition.face_encodings(image_rgb, face_locations)
+            
+            best_match_name = "Unknown"
+            best_confidence = 0.0
+
+            if self.permitted_face_encodings:
+                for face_encoding in face_encodings:
+                    matches = face_recognition.compare_faces(self.permitted_face_encodings, face_encoding)
+                    face_distances = face_recognition.face_distance(self.permitted_face_encodings, face_encoding)
+                    
+                    if len(face_distances) > 0:
+                        best_match_index = np.argmin(face_distances)
+                        if matches[best_match_index]:
+                            confidence = 1 - face_distances[best_match_index]
+                            if confidence > best_confidence:
+                                best_confidence = confidence
+                                best_match_name = self.permitted_face_names[best_match_index]
+
+            if best_match_name != "Unknown":
+                return {
+                    "status": "permitted_face",
+                    "recognizedAs": best_match_name,
+                    "confidence": best_confidence,
+                    "faces_detected": len(face_locations)
+                }
+            else:
+                 return {
+                    "status": "unknown_face",
+                    "recognizedAs": None,
+                    "confidence": 0.0,
+                    "faces_detected": len(face_locations)
+                }
+        except Exception as e:
+            logger.error(f"Error during face recognition: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+
+    def register_device(self, device_data: Dict[str, Any]) -> Dict[str, Any]:
+        device_id = device_data.get('id')
+        if not device_id:
+            raise ValueError("Device ID is required.")
+        
+        current_time_ms = time.time() * 1000
+        if device_id in self.devices:
+            self.devices[device_id].update(device_data)
+            self.devices[device_id]['lastSeen'] = current_time_ms
+        else:
+            device_data['lastSeen'] = current_time_ms
+            self.devices[device_id] = device_data
+        
+        logger.info(f"Registered/updated device: {device_id}")
+        return self.devices[device_id]
+
+    def get_all_devices(self) -> List[Dict[str, Any]]:
+        return list(self.devices.values())
+
+# Create a single, shared instance of the DataStore
+data_store = DataStore()
+```
+
+this is my `iot-image\main.py`:
+```
+import logging
+import sys
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# Import from our new modules
+import config
+from api_routes import router as api_router
+from data_store import data_store
+from ssh_tunnel import (create_ssh_tunnel, get_tunnel_instance,
+                        stop_ssh_tunnel)
+
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup Logic ---
+    logger.info("Application starting up...")
+    
+    # Load permitted faces into memory
+    data_store.load_permitted_faces()
+
+    # Start SSH reverse tunnel if configured
+    if config.SSH_HOST and config.SSH_USER:
+        logger.info("Attempting to start SSH reverse tunnel...")
+        create_ssh_tunnel(
+            public_vps_ip=config.SSH_HOST,
+            ssh_server_port=config.SSH_CONNECTION_PORT,
+            ssh_user=config.SSH_USER,
+            ssh_password=config.SSH_PASSWORD,
+            public_port=config.SSH_PUBLIC_PORT,
+            private_server_port=config.SSH_PRIVATE_PORT
+        )
+    else:
+        logger.warning("SSH tunnel environment variables not set. Skipping tunnel.")
+    
+    app.state.start_time = time.time()
+    yield
+    # --- Shutdown Logic ---
+    logger.info("Application shutting down...")
+    stop_ssh_tunnel()
+    logger.info("Shutdown complete.")
+
+# --- FastAPI App Initialization ---
+app = FastAPI(
+    title="IoT Backend GPU Server",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# --- Global Exception Handler ---
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception for request {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "message": "An internal server error occurred."}
+    )
+
+# --- Include Routers and Static Files ---
+app.include_router(api_router)
+app.mount("/data", StaticFiles(directory=config.DATA_DIR), name="data")
+
+# --- Root and Health Check Endpoints ---
+@app.get("/")
+async def root():
+    return {"message": "Server is running."}
+
+@app.get("/health")
+async def health_check():
+    tunnel = get_tunnel_instance()
+    return {
+        "status": "healthy",
+        "uptime_seconds": round(time.time() - app.state.start_time),
+        "face_recognition_ready": config.face_recognition_available,
+        "ssh_tunnel_active": tunnel.is_active if tunnel else False
+    }
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    if not config.uvicorn_available:
+        logger.critical("Uvicorn is not installed. Please run: pip install uvicorn[standard]")
+        sys.exit(1)
+        
+    logger.info(f"Starting server on {config.HOST}:{config.PORT}")
+    config.uvicorn.run(
+        "main:app",
+        host=config.HOST,
+        port=config.PORT,
+        reload=config.RELOAD_DEBUG,
+        log_level=config.UVICORN_LOG_LEVEL.lower()
+    )
+```
+
+this is my `iot-image\ssh_tunnel.py` : 
+```
+# ssh_tunnel.py
+import logging
+import os
+import socket
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+
+import paramiko
+
+logger = logging.getLogger(__name__)
+
+class SSHTunnel:
+    """SSH Reverse Tunnel implementation using paramiko"""
+    
+    def __init__(self,
+                 public_vps_ip: str,
+                 ssh_server_port: int,
+                 ssh_user: str,
+                 public_port: int,
+                 private_server_port: int,
+                 ssh_password: str = None,
+                 private_key_path: str = None,
+                 passphrase: str = None):
+        
+        self.public_vps_ip = public_vps_ip
+        self.ssh_server_port = ssh_server_port
+        self.ssh_user = ssh_user
+        self.ssh_password = ssh_password
+        self.private_key_path = private_key_path or os.getenv('SSH_PRIVATE_KEY_PATH')
+        self.passphrase = passphrase or os.getenv('SSH_PASSPHRASE')
+        
+        self.public_port = public_port
+        self.private_server_port = private_server_port
+        
+        self.ssh_client = None
+        self.transport = None
+        self.is_active = False
+        self.should_reconnect = True
+        self.tunnel_thread = None
+        
+        if not self.public_vps_ip:
+            raise ValueError("PUBLIC_VPS_IP is required")
+    
+    def _resolve_path(self, path: str) -> str:
+        if not path: return path
+        return str(Path(path).expanduser().resolve())
+    
+    def _get_ssh_key(self) -> Optional[paramiko.PKey]:
+        if not self.private_key_path: return None
+        key_path = self._resolve_path(self.private_key_path)
+        try:
+            for key_class in [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey]:
+                try:
+                    return key_class.from_private_key_file(key_path, password=self.passphrase)
+                except Exception:
+                    continue
+            logger.error(f"Unable to load private key from {key_path}")
+            return None
+        except Exception as e:
+            logger.error(f"Error loading private key: {e}")
+            return None
+
+    def _handle_tunnel_connection(self, channel, origin, server):
+        try:
+            local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            local_socket.connect(('127.0.0.1', self.private_server_port))
+
+            def forward(src, dest, direction):
+                while True:
+                    data = src.recv(1024)
+                    if not data: break
+                    dest.sendall(data)
+                src.close()
+                dest.close()
+
+            threading.Thread(target=forward, args=(channel, local_socket, "fwd"), daemon=True).start()
+            threading.Thread(target=forward, args=(local_socket, channel, "rev"), daemon=True).start()
+        except Exception as e:
+            logger.error(f"Error handling tunnel connection from {origin}: {e}")
+            channel.close()
+
+    def connect(self) -> bool:
+        try:
+            logger.info(f"Connecting to {self.ssh_user}@{self.public_vps_ip}:{self.ssh_server_port}...")
+            self.ssh_client = paramiko.SSHClient()
+            self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            connect_kwargs = {
+                'hostname': self.public_vps_ip,
+                'port': self.ssh_server_port,
+                'username': self.ssh_user,
+                'timeout': 20,
+                'allow_agent': False,
+                'look_for_keys': False
+            }
+            
+            ssh_key = self._get_ssh_key()
+            if ssh_key:
+                logger.info("Attempting SSH connection using private key.")
+                connect_kwargs['pkey'] = ssh_key
+            elif self.ssh_password:
+                logger.info("Attempting SSH connection using password.")
+                connect_kwargs['password'] = self.ssh_password
+            else:
+                logger.error("No SSH authentication method available (password or private key).")
+                return False
+
+            self.ssh_client.connect(**connect_kwargs)
+            self.transport = self.ssh_client.get_transport()
+            self.transport.set_keepalive(60)
+            
+            logger.info("SSH connection established. Setting up reverse tunnel...")
+            self.transport.request_port_forward('', self.public_port, handler=self._handle_tunnel_connection)
+            
+            logger.info(f"Reverse tunnel established: {self.public_vps_ip}:{self.public_port} -> localhost:{self.private_server_port}")
+            self.is_active = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to establish SSH connection or tunnel: {e}", exc_info=True)
+            self.is_active = False
+            if self.ssh_client: self.ssh_client.close()
+            return False
+
+    def disconnect(self):
+        self.should_reconnect = False
+        self.is_active = False
+        if self.transport and self.transport.is_active():
+            self.transport.cancel_port_forward('', self.public_port)
+        if self.ssh_client:
+            self.ssh_client.close()
+        logger.info("SSH tunnel disconnected.")
+    
+    def start(self):
+        def tunnel_worker():
+            while self.should_reconnect:
+                if not (self.transport and self.transport.is_active()):
+                    self.is_active = False
+                    logger.info("Tunnel is down, attempting to reconnect...")
+                    self.connect()
+                time.sleep(15) # Check connection status every 15 seconds
+        
+        self.tunnel_thread = threading.Thread(target=tunnel_worker, daemon=True)
+        self.tunnel_thread.start()
+        logger.info("SSH tunnel monitor thread started.")
+    
+    def stop(self):
+        self.disconnect()
+        if self.tunnel_thread and self.tunnel_thread.is_alive():
+            self.tunnel_thread.join(timeout=5)
+
+# --- Global Singleton Management ---
+_tunnel_instance: Optional[SSHTunnel] = None
+
+def create_ssh_tunnel(**kwargs) -> Optional[SSHTunnel]:
+    global _tunnel_instance
+    if _tunnel_instance:
+        logger.warning("SSH tunnel already exists.")
+        return _tunnel_instance
+    try:
+        _tunnel_instance = SSHTunnel(**kwargs)
+        _tunnel_instance.start()
+        return _tunnel_instance
+    except Exception as e:
+        logger.error(f"Failed to create SSH tunnel: {e}")
+        return None
+
+def get_tunnel_instance() -> Optional[SSHTunnel]:
+    return _tunnel_instance
+
+def stop_ssh_tunnel():
+    global _tunnel_instance
+    if _tunnel_instance:
+        _tunnel_instance.stop()
+        _tunnel_instance = None
+```
+
+this is my `iot-image\.env` : 
+```
+# Python GPU Face Recognition Service Configuration
+PORT=9001
+HOST=0.0.0.0
+DEBUG=True
+
+# SSH Reverse Tunnel Configuration
+PUBLIC_VPS_IP=203.175.11.145
+PUBLIC_PORT=9009
+PRIVATE_SERVER_PORT=9001
+SSH_USER=
+SSH_PASSWORD=
+
+# Face Recognition Configuration
+FACE_RECOGNITION_ENABLED=True
+FACE_DETECTION_MODEL=hog
+FACE_RECOGNITION_TOLERANCE=0.5
+
+# Backend Express Service Configuration
+EXPRESS_BACKEND_URL=http://203.175.11.145:9005
+EXPRESS_BACKEND_API_KEY=dev-api-key-change-in-production
+
+# Logging
+LOG_LEVEL=INFO
+```
+
+this is my `iot-backend-express\src\dataStore.js` : 
+```
+const fs = require('fs');
+const fsp = require('fs').promises;
+const path = require('path');
+
+// Ensure directories exist
+const dataDir = path.join(__dirname, '../data');
+const recordingsDir = path.join(__dirname, '../recordings');
+const permittedFacesDir = path.join(__dirname, '../permitted_faces');
+
+[dataDir, recordingsDir, permittedFacesDir].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// Simplified face recognition - delegated to Python service
+let faceRecognitionEnabled = false;
+
+// Function to clean up old recordings
+function cleanupOldRecordings(directory, maxAgeMs) {
+  fs.readdir(directory, (err, files) => {
+    if (err) {
+      console.error("Error reading data directory for cleanup:", err);
+      return;
+    }
+
+    const now = Date.now();
+    files.forEach(file => {
+      const parts = file.split('_');
+      if (parts.length >= 2) {
+        const timestampStr = parts[parts.length - 1].split('.')[0];
+        const timestamp = parseInt(timestampStr, 10);
+        if (!isNaN(timestamp) && (now - timestamp > maxAgeMs)) {
+          const filePath = path.join(directory, file);
+          fs.unlink(filePath, unlinkErr => {
+            if (unlinkErr) {
+              console.error(`Error deleting old file ${filePath}:`, unlinkErr);
+            } else {
+              console.log(`Deleted old file: ${filePath}`);
+            }
+          });
+        }
+      }
+    });
+  });
+}
+
+// Data store implementation
+class DataStore {
+  constructor() {
+    this.devices = new Map();
+    this.sensorData = new Map();
+    this.commands = new Map();
+    this.notes = new Map();
+    this.nextNoteId = 1;
+    
+    console.log('DataStore initialized - Face recognition delegated to Python service');
+    
+    // Setup automatic cleanup
+    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    const FRAME_MAX_AGE_MS = 10 * 60 * 1000;   // 10 minutes
+    
+    setInterval(() => {
+      console.log(`Running scheduled cleanup of old frames (older than ${FRAME_MAX_AGE_MS / 60000} mins)...`);
+      cleanupOldRecordings(dataDir, FRAME_MAX_AGE_MS);
+    }, CLEANUP_INTERVAL_MS);
+  }
+
+  // Device operations
+  updateDevice(deviceId, updates) {
+    const device = this.devices.get(deviceId);
+    if (device) {
+      Object.assign(device, updates, { lastSeen: Date.now() });
+      this.devices.set(deviceId, device);
+      return device;
+    }
+    return null;
+  }
+
+  registerDevice(device) {
+    const existingDevice = this.devices.get(device.id);
+    if (existingDevice) {
+      const updatedDevice = {
+        ...existingDevice,
+        ...device,
+        lastSeen: Date.now()
+      };
+      this.devices.set(device.id, updatedDevice);
+      return updatedDevice;
+    } else {
+      const newDevice = {
+        ...device,
+        status: device.status || 'online',
+        lastSeen: Date.now(),
+        errors: 0
+      };
+      this.devices.set(device.id, newDevice);
+      return newDevice;
+    }
+  }
+
+  getDevice(deviceId) {
+    return this.devices.get(deviceId);
+  }
+
+  getAllDevices() {
+    return Array.from(this.devices.values());
+  }
+
+  getSystemStatus() {
+    return {
+      devicesOnline: this.getAllDevices().filter(d => d.status === 'online').length,
+      devicesTotal: this.devices.size,
+      uptime: process.uptime(),
+      timestamp: Date.now()
+    };
+  }
+
+  getDeviceStatusSummary() {
+    const devices = this.getAllDevices();
+    return {
+      total: devices.length,
+      online: devices.filter(d => d.status === 'online').length,
+      offline: devices.filter(d => d.status === 'offline').length,
+      warning: devices.filter(d => d.status === 'warning').length,
+      error: devices.filter(d => d.status === 'error').length
+    };
+  }
+
+  // Sensor data operations
+  saveSensorData(data) {
+    if (!this.sensorData.has(data.deviceId)) {
+      this.sensorData.set(data.deviceId, []);
+    }
+    this.sensorData.get(data.deviceId).push(data);
+    return data;
+  }
+
+  // GPU-accelerated face recognition via Python service
+  async performFaceRecognition(imageBuffer) {
+    const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+    const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
+
+    console.log(`[Face Recognition] Service URL: ${pythonServiceUrl}/recognize, Enabled: ${serviceEnabled}`);
+
+    if (!serviceEnabled) {
+      console.log('[Face Recognition] Service is disabled in configuration.');
+      return {
+        status: 'service_disabled',
+        recognizedAs: null,
+        error: 'Face recognition service is disabled.'
+      };
+    }
+
+    try {
+      const FormData = require('form-data');
+      // Ensure you have node-fetch installed: npm install node-fetch
+      const { default: fetch } = await import('node-fetch');
+      
+      const form = new FormData();
+      form.append('file', imageBuffer, {
+        filename: 'frame.jpg',
+        contentType: 'image/jpeg'
+      });
+      
+      console.log(`[Face Recognition] Attempting to call Python GPU service at: ${pythonServiceUrl}/recognize`);
+
+      const response = await fetch(`${pythonServiceUrl}/recognize`, {
+        method: 'POST',
+        body: form,
+        headers: form.getHeaders(),
+        timeout: 15000 // Increased timeout to 15 seconds
+      });
+      
+      console.log(`[Face Recognition] Response status from Python service: ${response.status}`);
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('[Face Recognition] Raw result from Python service:', result);
+        
+        // Adapt based on the actual structure of a successful response from your Python service
+        // This structure assumes the Python service might return 'status', 'recognizedAs', 'confidence', 'faces_detected', 'processing_time'
+        // Or for older/different versions: 'status', 'recognized_faces' (array), 'faces_detected', 'processing_time'
+        if (result.status === 'permitted_face' || (result.status === 'success' && result.recognized_faces && result.recognized_faces.length > 0)) {
+          const faceName = result.recognizedAs || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].name : 'Unknown');
+          const confidence = result.confidence || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].confidence : null);
+          return {
+            status: 'recognized',
+            recognizedAs: faceName,
+            confidence: confidence,
+            faces_detected: result.faces_detected,
+            processing_time: result.processing_time
+          };
+        } else if (result.status === 'unknown_face' || (result.status === 'success' && result.faces_detected > 0 && (!result.recognized_faces || result.recognized_faces.length === 0))) {
+          return {
+            status: 'unknown_face',
+            recognizedAs: null,
+            faces_detected: result.faces_detected,
+            processing_time: result.processing_time
+          };
+        } else if (result.status === 'no_face_detected' || result.status === 'no_faces' || (result.status === 'success' && result.faces_detected === 0)) {
+           return {
+            status: 'no_faces',
+            recognizedAs: null,
+            faces_detected: 0,
+            processing_time: result.processing_time
+          };
+        } else {
+            console.warn('[Face Recognition] Unexpected success response structure or status from Python service:', result);
+            return {
+                status: result.status || 'unexpected_response',
+                recognizedAs: null,
+                error: 'Unexpected response structure from recognition service.',
+                details: result
+            };
+        }
+      } else {
+        const errorBody = await response.text();
+        console.error(`[Face Recognition] Python service at ${pythonServiceUrl}/recognize returned error ${response.status}: ${errorBody}`);
+        return {
+          status: 'service_error',
+          recognizedAs: null,
+          error: `Recognition service returned ${response.status}`,
+          details: errorBody
+        };
+      }
+      
+    } catch (err) {
+      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${err.message}`, err);
+      if (err.name === 'AbortError' || err.message.toLowerCase().includes('timeout')) {
+        return {
+          status: 'service_timeout',
+          recognizedAs: null,
+          error: `Request to recognition service timed out: ${err.message}`
+        };
+      }
+      return {
+        status: 'service_error',
+        recognizedAs: null,
+        error: `Failed to connect to recognition service: ${err.message}`
+      };
+    }
+  }
+
+  async addPermittedFace(imageBuffer, subjectName) {
+    try {
+      // Call Python service to add permitted face
+      const FormData = require('form-data');
+      const { default: fetch } = await import('node-fetch');
+      
+      // Get Python service URL from environment
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      
+      const form = new FormData();
+      form.append('image', imageBuffer, {
+        filename: 'permitted_face.jpg',
+        contentType: 'image/jpeg'
+      });
+      form.append('name', subjectName);
+      
+      const response = await fetch(`${pythonServiceUrl}/api/v1/recognition/add-permitted-face`, {
+        method: 'POST',
+        body: form,
+        headers: form.getHeaders()
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        return result;
+      } else {
+        throw new Error('Failed to add permitted face via Python service');
+      }
+    } catch (error) {
+      console.error("Error adding permitted face:", error);
+      throw error;
+    }
+  }
+}
+
+module.exports = {
+  DataStore,
+  dataDir,
+  recordingsDir,
+  permittedFacesDir,
+  cleanupOldRecordings
+};
+```
+
+
+
+
+this is the log:
+```
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082512013.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082512013,"filename":"unknown_device_1750082512013.jpg","url":"/data/unknown_device_1750082512013.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+POST /api/v1/stream/stream 200 3524.488 ms - 173
+[Stream API] Received frame from device: unknown_device, timestamp: 1750082515150
+[Stream API] Frame saved: D:\Data\VSCode\Internet Of Things\iot-backend-express\data\unknown_device_1750082515150.jpg
+[Stream API] Initiating face recognition for frame: unknown_device_1750082515150.jpg
+[Face Recognition] Service URL: http://203.175.11.145:9009/recognize, Enabled: true
+[Face Recognition] Attempting to call Python GPU service at: http://203.175.11.145:9009/recognize
+[Face Recognition] Response status from Python service: 404
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082515150.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082515150,"filename":"unknown_device_1750082515150.jpg","url":"/data/unknown_device_1750082515150.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+POST /api/v1/stream/stream 200 1323.172 ms - 173
+[Stream API] Received frame from device: unknown_device, timestamp: 1750082515954
+[Stream API] Frame saved: D:\Data\VSCode\Internet Of Things\iot-backend-express\data\unknown_device_1750082515954.jpg
+[Stream API] Initiating face recognition for frame: unknown_device_1750082515954.jpg
+[Face Recognition] Service URL: http://203.175.11.145:9009/recognize, Enabled: true
+[Face Recognition] Attempting to call Python GPU service at: http://203.175.11.145:9009/recognize
+[Face Recognition] Response status from Python service: 404
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082515954.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082515954,"filename":"unknown_device_1750082515954.jpg","url":"/data/unknown_device_1750082515954.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+POST /api/v1/stream/stream 200 3729.727 ms - 173
+[Stream API] Received frame from device: unknown_device, timestamp: 1750082519959
+[Stream API] Frame saved: D:\Data\VSCode\Internet Of Things\iot-backend-express\data\unknown_device_1750082519959.jpg
+[Stream API] Initiating face recognition for frame: unknown_device_1750082519959.jpg
+[Face Recognition] Service URL: http://203.175.11.145:9009/recognize, Enabled: true
+[Face Recognition] Attempting to call Python GPU service at: http://203.175.11.145:9009/recognize
+[Face Recognition] Response status from Python service: 404
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082519959.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082519959,"filename":"unknown_device_1750082519959.jpg","url":"/data/unknown_device_1750082519959.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+POST /api/v1/stream/stream 200 3164.078 ms - 173
+[Stream API] Received frame from device: unknown_device, timestamp: 1750082526510
+[Stream API] Frame saved: D:\Data\VSCode\Internet Of Things\iot-backend-express\data\unknown_device_1750082526510.jpg
+[Stream API] Initiating face recognition for frame: unknown_device_1750082526510.jpg
+[Face Recognition] Service URL: http://203.175.11.145:9009/recognize, Enabled: true
+[Face Recognition] Attempting to call Python GPU service at: http://203.175.11.145:9009/recognize
+[Face Recognition] Response status from Python service: 404
+POST /api/v1/stream/stream - - ms - -
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082526510.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082526510,"filename":"unknown_device_1750082526510.jpg","url":"/data/unknown_device_1750082526510.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+[Info] Incoming tunnel connection from 182.253.50.125:12454 to 0.0.0.0:9005
+[Info] Attempting to connect to local service at localhost:3001...
+[Success] Connected to local service on port 3001
+[Info] Data pipe established between remote client and local service
+[Stream API] Received frame from device: unknown_device, timestamp: 1750082532597
+[Stream API] Frame saved: D:\Data\VSCode\Internet Of Things\iot-backend-express\data\unknown_device_1750082532597.jpg
+[Stream API] Initiating face recognition for frame: unknown_device_1750082532597.jpg
+[Face Recognition] Service URL: http://203.175.11.145:9009/recognize, Enabled: true
+[Face Recognition] Attempting to call Python GPU service at: http://203.175.11.145:9009/recognize
+[Face Recognition] Response status from Python service: 404
+[Face Recognition] Python service at http://203.175.11.145:9009/recognize returned error 404: {"detail":"Not Found"}
+[Stream API] Face recognition result for frame  unknown_device_1750082532597.jpg : {"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404","details":"{\"detail\":\"Not Found\"}"}
+[Stream API] Broadcasting WebSocket message: {"type":"new_frame","deviceId":"unknown_device","timestamp":1750082532597,"filename":"unknown_device_1750082532597.jpg","url":"/data/unknown_device_1750082532597.jpg","recognition":{"status":"service_error","recognizedAs":null,"error":"Recognition service returned 404"}}
+POST /api/v1/stream/stream 200 6436.288 ms - 173
+```
+
+this is the logs in the pyhton service:
+```
+INFO:     127.0.0.1:53368 - "POST /recognize HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53370 - "POST /recognize HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53372 - "POST /recognize HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53374 - "POST /recognize HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53378 - "POST /recognize HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:53381 - "POST /recognize HTTP/1.1" 404 Not Found
+```
+this have errors
