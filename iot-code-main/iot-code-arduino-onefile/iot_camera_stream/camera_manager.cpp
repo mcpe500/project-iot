@@ -10,7 +10,7 @@
 // ===========================
 
 void initCamera() {
-  Serial.println("Initializing OV5640 camera for RAW 800x600 STREAMING...");
+  Serial.println("Initializing OV5640 camera for HIGH-SPEED STREAMING...");
   
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -33,21 +33,32 @@ void initCamera() {
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = XCLK_FREQ_HZ;
   
-  // --- CRITICAL CHANGES FOR HIGH FPS RAW STREAMING ---
+  // --- HYBRID CONFIGURATION FOR OPTIMAL PERFORMANCE ---
   config.frame_size = FRAMESIZE_SVGA;      // 800x600 resolution
-  config.pixel_format = PIXFORMAT_RGB565;  // Send raw pixels, NOT JPEG
+  
+  #if USE_RAW_STREAMING
+    config.pixel_format = PIXFORMAT_RGB565;  // Raw pixels for maximum speed
+    Serial.println("Using RAW RGB565 streaming mode");
+  #else
+    config.pixel_format = PIXFORMAT_JPEG;    // Optimized JPEG for reliability
+    config.jpeg_quality = JPEG_QUALITY_OPTIMIZED;
+    Serial.println("Using optimized JPEG streaming mode");
+  #endif
+  
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
 
   // Optimize for PSRAM
   if (psramFound()) {
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.fb_count = FB_COUNT_PSRAM;
-    Serial.println("PSRAM found - using RAW optimized settings");
+    #if !USE_RAW_STREAMING
+      config.jpeg_quality = JPEG_QUALITY_HIGH;
+    #endif
+    Serial.println("PSRAM found - using optimized settings");
   } else {
-    // Note: Raw streaming without PSRAM is extremely difficult
     config.fb_location = CAMERA_FB_IN_DRAM;
     config.fb_count = FB_COUNT_DRAM;
-    Serial.println("WARNING: No PSRAM - raw streaming performance will be severely limited");
+    Serial.println("No PSRAM - using conservative settings");
   }
 
   esp_err_t err = esp_camera_init(&config);
@@ -58,21 +69,32 @@ void initCamera() {
     return;
   }
 
-  Serial.println("Camera initialized successfully for RAW streaming!");
+  Serial.println("Camera initialized successfully!");
 
-  // Configure sensor
+  // Configure sensor for optimal image quality
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    s->set_framesize(s, FRAMESIZE_SVGA);  // Lock to SVGA
+    s->set_framesize(s, FRAMESIZE_SVGA);
+    
+    #if !USE_RAW_STREAMING
+      s->set_quality(s, JPEG_QUALITY_HIGH);
+    #endif
+    
+    // Optimize sensor settings for both raw and JPEG
     s->set_brightness(s, 0);
-    s->set_contrast(s, 0);
+    s->set_contrast(s, 1);     // Slight contrast boost
     s->set_saturation(s, 0);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
     s->set_exposure_ctrl(s, 1);
     s->set_gain_ctrl(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)4);
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
+    s->set_raw_gma(s, 1);
+    s->set_lenc(s, 1);
     
-    Serial.println("Camera configured for optimal RAW streaming");
+    Serial.println("Camera configured for optimal streaming");
   }
 }
 
@@ -183,7 +205,7 @@ bool sendFrameWithRetry(camera_fb_t* fb) {
   return false;
 }
 
-// This new version sends raw pixel data with custom headers for backend processing
+// Hybrid function that sends either raw pixels or JPEG based on configuration
 bool sendFrameToURL(camera_fb_t* fb, const char* url, int timeout_ms) {
     if (!fb || fb->len == 0) return false;
     if (WiFi.status() != WL_CONNECTED) return false;
@@ -196,31 +218,52 @@ bool sendFrameToURL(camera_fb_t* fb, const char* url, int timeout_ms) {
         return false;
     }
 
-    // --- Manually construct all HTTP headers for a raw binary stream ---
-    client.print("POST " + String(SERVER_PATH) + " HTTP/1.1\r\n");
-    client.print("Host: " + String(SERVER_HOST) + "\r\n");
-    client.print("X-API-Key: " + String(API_KEY) + "\r\n");
-    
-    // This tells the server it's receiving a raw blob of data
-    client.print("Content-Type: application/octet-stream\r\n");
-    
-    // Custom headers to tell the backend how to interpret the raw data
-    client.print("X-Frame-Format: RGB565\r\n");
-    client.print("X-Frame-Width: " + String(fb->width) + "\r\n");
-    client.print("X-Frame-Height: " + String(fb->height) + "\r\n");
-    
-    client.print("Content-Length: " + String(fb->len) + "\r\n");
-    client.print("Connection: close\r\n");
-    client.print("\r\n"); // An empty line signifies the end of the headers
-
-    // --- Send the raw pixel data directly ---
-    if (client.write(fb->buf, fb->len) != fb->len) {
-        if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-            Serial.println("Failed to send frame buffer.");
+    #if USE_RAW_STREAMING
+        // --- RAW RGB565 STREAMING MODE ---
+        client.print("POST " + String(SERVER_PATH) + " HTTP/1.1\r\n");
+        client.print("Host: " + String(SERVER_HOST) + "\r\n");
+        client.print("X-API-Key: " + String(API_KEY) + "\r\n");
+        client.print("Content-Type: application/octet-stream\r\n");
+        client.print("X-Frame-Format: RGB565\r\n");
+        client.print("X-Frame-Width: " + String(fb->width) + "\r\n");
+        client.print("X-Frame-Height: " + String(fb->height) + "\r\n");
+        client.print("X-Device-Id: " + String(DEVICE_ID) + "\r\n");
+        client.print("Content-Length: " + String(fb->len) + "\r\n");
+        client.print("Connection: close\r\n");
+        client.print("\r\n");
+        
+        // Send raw pixel data
+        if (client.write(fb->buf, fb->len) != fb->len) {
+            if (frameCount % FAILURE_LOG_INTERVAL == 0) {
+                Serial.println("Failed to send raw frame buffer.");
+            }
+            client.stop();
+            return false;
         }
-        client.stop();
-        return false;
-    }
+    #else
+        // --- OPTIMIZED JPEG STREAMING MODE ---
+        String boundary = "----ESP32CAMBoundary";
+        String header = "--" + boundary + "\r\n"
+                        "Content-Disposition: form-data; name=\"image\"; filename=\"frame.jpg\"\r\n"
+                        "Content-Type: image/jpeg\r\n\r\n";
+        String footer = "\r\n--" + boundary + "--\r\n";
+        
+        size_t totalLength = header.length() + fb->len + footer.length();
+
+        client.print("POST " + String(SERVER_PATH) + " HTTP/1.1\r\n");
+        client.print("Host: " + String(SERVER_HOST) + "\r\n");
+        client.print("X-API-Key: " + String(API_KEY) + "\r\n");
+        client.print("X-Device-Id: " + String(DEVICE_ID) + "\r\n");
+        client.print("Content-Length: " + String(totalLength) + "\r\n");
+        client.print("Content-Type: multipart/form-data; boundary=" + boundary + "\r\n");
+        client.print("Connection: close\r\n");
+        client.print("\r\n");
+
+        // Send multipart form data
+        client.print(header);
+        client.write(fb->buf, fb->len);
+        client.print(footer);
+    #endif
 
     // --- Wait for the server's response ---
     unsigned long responseTimeout = millis();

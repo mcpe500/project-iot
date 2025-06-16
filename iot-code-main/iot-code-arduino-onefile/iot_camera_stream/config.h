@@ -89,11 +89,13 @@
 #define MAX_CPU_FREQ_MHZ 240
 #define XCLK_FREQ_HZ 20000000
 
-// --- RAW PIXEL STREAMING - JPEG QUALITY NO LONGER USED ---
-// We are sending raw RGB565 pixels, not JPEG compressed data
-// This eliminates the slow compression step entirely
+// --- HYBRID APPROACH: SUPPORT BOTH RAW AND JPEG ---
+// Use JPEG for reliability, RAW for maximum performance
+#define USE_RAW_STREAMING false  // Set to true for raw RGB565, false for optimized JPEG
+#define JPEG_QUALITY_OPTIMIZED 20  // Fast compression for high FPS
+#define JPEG_QUALITY_HIGH 8        // High quality for face recognition
 
-// Buffer settings - optimized for raw streaming
+// Buffer settings - optimized for both modes
 #define FB_COUNT_PSRAM 3  // Use 3 buffers for maximum throughput
 #define FB_COUNT_DRAM 1
 
