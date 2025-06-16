@@ -6,7 +6,8 @@ const fsp = require('fs').promises;
 const path = require('path');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
-const sharp = require('sharp'); // <<< ADD SHARP LIBRARY
+const sharp = require('sharp');
+const Jimp = require('jimp'); // Add Jimp for better RGB565 handling
 
 const { dataDir, recordingsDir } = require('./dataStore');
 
@@ -142,90 +143,148 @@ function setupRoutes(app, dataStore, wss) {
     res.json({ message: 'Data received', data: savedData });
   });
 
-  // Stream endpoint with RAW pixel processing and face recognition
-  app.post('/api/v1/stream/stream', 
-    // Use Express's raw body parser for this route ONLY.
-    // It will read the incoming binary data into req.body as a Buffer.
-    express.raw({ type: 'application/octet-stream', limit: '4mb' }), 
-    async (req, res) => {
-      
-      // Get frame metadata from the custom headers sent by the ESP32
-      const width = parseInt(req.headers['x-frame-width'], 10);
-      const height = parseInt(req.headers['x-frame-height'], 10);
-      const format = req.headers['x-frame-format']; // e.g., "RGB565"
+  // Stream endpoint with HYBRID processing (both JPEG and RAW support)
+  app.post('/api/v1/stream/stream', async (req, res) => {
+    const contentType = req.headers['content-type'] || '';
+    const timestamp = Date.now();
+    const deviceId = req.headers['x-device-id'] || 'unknown_device';
+    const filename = `${deviceId}_${timestamp}.jpg`;
+    const filePath = path.join(dataDir, filename);
 
-      if (!width || !height || !format || !req.body || req.body.length === 0) {
-        console.log('[Stream API] Bad request: Missing headers or empty body');
-        return res.status(400).json({ error: 'Missing frame metadata headers or body' });
-      }
+    console.log(`[Stream API] Received request from ${deviceId}, Content-Type: ${contentType}`);
 
-      const timestamp = Date.now();
-      // deviceId would now need to be part of the URL or a header if needed, as there's no form body to parse
-      const deviceId = req.headers['x-device-id'] || 'unknown_device';
-      const filename = `${deviceId}_${timestamp}.jpg`;
-      const filePath = path.join(dataDir, filename);
+    try {
+      let jpegBuffer;
 
-      console.log(`[Stream API] Received RAW frame from ${deviceId}: ${width}x${height}, Format: ${format}, Size: ${req.body.length} bytes`);
+      if (contentType === 'application/octet-stream') {
+        // --- RAW RGB565 PROCESSING ---
+        const width = parseInt(req.headers['x-frame-width'], 10);
+        const height = parseInt(req.headers['x-frame-height'], 10);
+        const format = req.headers['x-frame-format'];
 
-      try {
-        // --- IMAGE PROCESSING ON THE BACKEND USING SHARP ---
-        // This is where the magic happens. We convert the raw pixel buffer into a high-quality JPEG.
-        const jpegBuffer = await sharp(req.body, {
-          raw: {
-            width: width,
-            height: height,
-            channels: 2, // For RGB565, sharp interprets it as 2 channels (16 bits total)
-          },
-        })
-        .jpeg({ quality: 90 }) // Create a high-quality JPEG for saving/display
-        .toBuffer();
+        if (!width || !height || !format) {
+          return res.status(400).json({ error: 'Missing frame metadata headers for raw data' });
+        }
 
-        // Save the newly created JPEG image
-        await fsp.writeFile(filePath, jpegBuffer);
-        console.log('[Stream API] Raw frame converted and saved as JPEG:', filePath);
+        console.log(`[Stream API] Processing RAW ${format} frame: ${width}x${height}`);
 
-        // Now, perform face recognition on the clean, high-quality JPEG buffer
-        console.log('[Stream API] Initiating face recognition for converted frame:', filename);
-        const recognition = await dataStore.performFaceRecognition(jpegBuffer);
-        console.log('[Stream API] Face recognition result for frame ', filename, ':', JSON.stringify(recognition));
-        
-        // Broadcast to WebSocket clients
-        const wsMessage = {
-          type: 'new_frame',
-          deviceId,
-          timestamp,
-          filename,
-          url: `/data/${filename}`,
-          recognition: {
-            status: recognition.status,
-            recognizedAs: recognition.recognizedAs,
-            confidence: recognition.confidence,
-            error: recognition.error
-          }
-        };
-        
-        console.log('[Stream API] Broadcasting WebSocket message:', JSON.stringify(wsMessage));
-        wss.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(wsMessage));
+        // Parse raw body manually
+        const rawBodyChunks = [];
+        req.on('data', chunk => rawBodyChunks.push(chunk));
+        req.on('end', async () => {
+          try {
+            const rawBuffer = Buffer.concat(rawBodyChunks);
+            console.log(`[Stream API] Raw buffer size: ${rawBuffer.length} bytes`);
+
+            if (format === 'RGB565') {
+              const rgbBuffer = convertRGB565ToRGB(rawBuffer, width, height);
+              jpegBuffer = await sharp(rgbBuffer, {
+                raw: { width, height, channels: 3 }
+              }).jpeg({ quality: 85 }).toBuffer();
+            }
+
+            await fsp.writeFile(filePath, jpegBuffer);
+            console.log('[Stream API] Raw frame converted and saved:', filePath);
+
+            const recognition = await dataStore.performFaceRecognition(jpegBuffer);
+            
+            // Broadcast and respond
+            const wsMessage = {
+              type: 'new_frame',
+              deviceId, timestamp, filename,
+              url: `/data/${filename}`,
+              recognition: {
+                status: recognition.status,
+                recognizedAs: recognition.recognizedAs,
+                confidence: recognition.confidence,
+                error: recognition.error
+              }
+            };
+
+            wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify(wsMessage));
+              }
+            });
+
+            res.json({ 
+              message: 'Raw frame processed successfully', 
+              filename, 
+              recognitionStatus: recognition.status,
+              recognizedAs: recognition.recognizedAs,
+              confidence: recognition.confidence 
+            });
+
+          } catch (error) {
+            console.error('[Stream API] Error processing raw frame:', error);
+            res.status(500).json({ error: 'Failed to process raw frame', details: error.message });
           }
         });
 
-        res.json({ 
-          message: 'Raw frame received and processed successfully', 
-          filename: filename,
-          recognitionStatus: recognition.status,
-          recognizedAs: recognition.recognizedAs,
-          confidence: recognition.confidence,
-          error: recognition.error
+      } else if (contentType.includes('multipart/form-data')) {
+        // --- JPEG MULTIPART PROCESSING ---
+        const upload = multer({ storage: multer.memoryStorage() }).single('image');
+        
+        upload(req, res, async (err) => {
+          if (err || !req.file) {
+            console.log('[Stream API] No image in multipart request');
+            return res.status(400).json({ error: 'No image provided' });
+          }
+
+          console.log(`[Stream API] Processing JPEG frame: ${req.file.size} bytes`);
+
+          try {
+            // Save the JPEG directly (it's already compressed)
+            await fsp.writeFile(filePath, req.file.buffer);
+            console.log('[Stream API] JPEG frame saved:', filePath);
+
+            // Perform face recognition
+            const recognition = await dataStore.performFaceRecognition(req.file.buffer);
+            console.log('[Stream API] Face recognition result:', JSON.stringify(recognition));
+            
+            // Broadcast to WebSocket clients
+            const wsMessage = {
+              type: 'new_frame',
+              deviceId, timestamp, filename,
+              url: `/data/${filename}`,
+              recognition: {
+                status: recognition.status,
+                recognizedAs: recognition.recognizedAs,
+                confidence: recognition.confidence,
+                error: recognition.error
+              }
+            };
+            
+            wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify(wsMessage));
+              }
+            });
+
+            res.json({ 
+              message: 'JPEG frame received and processed', 
+              filename,
+              recognitionStatus: recognition.status,
+              recognizedAs: recognition.recognizedAs,
+              confidence: recognition.confidence,
+              error: recognition.error
+            });
+
+          } catch (error) {
+            console.error('[Stream API] Error processing JPEG frame:', error);
+            res.status(500).json({ error: 'Failed to process JPEG frame', details: error.message });
+          }
         });
 
-      } catch (err) {
-        console.error('[Stream API] Error processing raw frame:', err.message, err.stack);
-        res.status(500).json({ error: 'Failed to process raw frame', details: err.message });
+      } else {
+        return res.status(400).json({ error: 'Unsupported content type. Expected multipart/form-data or application/octet-stream.' });
       }
+
+    } catch (err) {
+      console.error('[Stream API] General error:', err);
+      res.status(500).json({ error: 'Internal server error', details: err.message });
     }
-  );
+  });
 
   // Record video from last 30 seconds of frames
   app.post('/api/v1/stream/record', async (req, res) => {
@@ -518,6 +577,94 @@ function setupRoutes(app, dataStore, wss) {
   app.use('/data', express.static(dataDir));
   app.use('/recordings', express.static(recordingsDir));
 
+  // Debug utility for RGB565 conversion testing
+  function debugRGB565Conversion(rgb565Buffer, width, height, samplePixels = 5) {
+    console.log(`[RGB565 Debug] Buffer size: ${rgb565Buffer.length} bytes`);
+    console.log(`[RGB565 Debug] Expected size: ${width * height * 2} bytes`);
+    console.log(`[RGB565 Debug] Dimensions: ${width}x${height}`);
+    
+    // Sample a few pixels for debugging
+    for (let i = 0; i < Math.min(samplePixels * 2, rgb565Buffer.length); i += 2) {
+      const rgb565 = rgb565Buffer.readUInt16LE(i);
+      
+      const r5 = (rgb565 >> 11) & 0x1F;
+      const g6 = (rgb565 >> 5) & 0x3F;
+      const b5 = rgb565 & 0x1F;
+      
+      const r8 = Math.round((r5 * 255) / 31);
+      const g8 = Math.round((g6 * 255) / 63);
+      const b8 = Math.round((b5 * 255) / 31);
+      
+      console.log(`[RGB565 Debug] Pixel ${i/2}: RGB565=0x${rgb565.toString(16).padStart(4, '0')} → RGB(${r8},${g8},${b8})`);
+    }
+  }
+
+  // Improved RGB565 to RGB conversion function
+  function convertRGB565ToRGB(rgb565Buffer, width, height) {
+    console.log(`[RGB565] Converting ${width}x${height} RGB565 buffer (${rgb565Buffer.length} bytes)`);
+    
+    const rgbBuffer = Buffer.alloc(width * height * 3);
+    const expectedSize = width * height * 2; // RGB565 is 2 bytes per pixel
+    
+    if (rgb565Buffer.length !== expectedSize) {
+      console.warn(`[RGB565] Warning: Buffer size mismatch. Expected ${expectedSize}, got ${rgb565Buffer.length}`);
+    }
+    
+    let rgbIndex = 0;
+    
+    for (let i = 0; i < Math.min(rgb565Buffer.length, expectedSize); i += 2) {
+      // Read RGB565 as big-endian (ESP32 might send big-endian)
+      const rgb565 = rgb565Buffer.readUInt16BE(i);
+      
+      // Extract 5-6-5 bits correctly
+      const r5 = (rgb565 & 0xF800) >> 11;  // Bits 15-11 (5 bits red)
+      const g6 = (rgb565 & 0x07E0) >> 5;   // Bits 10-5  (6 bits green)  
+      const b5 = (rgb565 & 0x001F);        // Bits 4-0   (5 bits blue)
+      
+      // Convert to 8-bit values with proper scaling
+      const r8 = Math.round((r5 * 255) / 31);
+      const g8 = Math.round((g6 * 255) / 63);
+      const b8 = Math.round((b5 * 255) / 31);
+      
+      // Store in RGB buffer
+      rgbBuffer[rgbIndex++] = r8;
+      rgbBuffer[rgbIndex++] = g8;
+      rgbBuffer[rgbIndex++] = b8;
+    }
+    
+    return rgbBuffer;
+  }
+
+  // Alternative RGB565 conversion using little-endian
+  function convertRGB565ToRGBLE(rgb565Buffer, width, height) {
+    console.log(`[RGB565-LE] Converting ${width}x${height} RGB565 buffer (${rgb565Buffer.length} bytes)`);
+    
+    const rgbBuffer = Buffer.alloc(width * height * 3);
+    const expectedSize = width * height * 2;
+    
+    let rgbIndex = 0;
+    
+    for (let i = 0; i < Math.min(rgb565Buffer.length, expectedSize); i += 2) {
+      // Read RGB565 as little-endian
+      const rgb565 = rgb565Buffer.readUInt16LE(i);
+      
+      // Extract 5-6-5 bits correctly
+      const r5 = (rgb565 & 0xF800) >> 11;
+      const g6 = (rgb565 & 0x07E0) >> 5;
+      const b5 = (rgb565 & 0x001F);
+      
+      // Convert to 8-bit values
+      const r8 = Math.round((r5 * 255) / 31);
+      const g8 = Math.round((g6 * 255) / 63);
+      const b8 = Math.round((b5 * 255) / 31);
+      
+      rgbBuffer[rgbIndex++] = r8;
+      rgbBuffer[rgbIndex++] = g8;
+      rgbBuffer[rgbIndex++] = b8;
+    }
+    
+    return rgbBuffer;
+  }
 }
 
 module.exports = setupRoutes;
