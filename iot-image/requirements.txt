@@ -17,17 +17,17 @@ torch==2.1.0
 torchvision==0.16.0
 
 # Face recognition dependencies (optional - install if needed)
-# face-recognition==1.3.0
-# dlib==19.24.2
+face-recognition==1.3.0
+dlib==19.24.2
 
 # MediaPipe for face detection (optional)
 # mediapipe==0.10.7
 
 # TensorFlow (optional - for GPU acceleration)
-# tensorflow-gpu==2.13.0
+tensorflow-gpu==2.13.0
 
 # SSH tunnel functionality (optional - install if needed)
 # paramiko>=3.4.0
-# sshtunnel>=0.4.0
+sshtunnel>=0.4.0
 mediapipe
 paramiko
