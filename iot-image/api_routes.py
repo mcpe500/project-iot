@@ -57,6 +57,27 @@ async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...
     
     return JSONResponse(content={"success": True, "message": f"Permitted face '{name}' added."})
 
+@router.post("/recognize")
+async def recognize_endpoint(image: UploadFile = File(...)):
+    """
+    This endpoint is specifically for face recognition requests from the backend.
+    """
+    logger.info(f"Received request for /api/v1/recognize. File: {image.filename}")
+    start_time = time.time()
+    
+    contents = await image.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # Perform the recognition
+    result = await data_store.perform_face_recognition(contents)
+    
+    # Add processing time to the response for logging and debugging
+    processing_time = time.time() - start_time
+    result["processing_time"] = round(processing_time, 4)
+    
+    logger.info(f"Returning recognition result: {result}")
+    return JSONResponse(content=result)
 
 @router.get("/devices")
 async def get_all_devices_endpoint():

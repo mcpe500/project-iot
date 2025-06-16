@@ -158,14 +158,14 @@ class DataStore {
       const { default: fetch } = await import('node-fetch');
       
       const form = new FormData();
-      form.append('file', imageBuffer, {
+      form.append('image', imageBuffer, { // Changed 'file' to 'image'
         filename: 'frame.jpg',
         contentType: 'image/jpeg'
       });
       
-      console.log(`[Face Recognition] Attempting to call Python GPU service at: ${pythonServiceUrl}/recognize`);
+      console.log(`[Face Recognition] Attempting to call Python GPU service at: ${pythonServiceUrl}/api/v1/recognize`);
 
-      const response = await fetch(`${pythonServiceUrl}/recognize`, {
+      const response = await fetch(`${pythonServiceUrl}/api/v1/recognize`, {
         method: 'POST',
         body: form,
         headers: form.getHeaders(),
