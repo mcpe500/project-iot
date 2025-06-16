@@ -106,7 +106,7 @@
 // ===========================
 // Debug Configuration
 // ===========================
-#define SERIAL_BAUD_RATE 115200
+#define SERIAL_BAUD_RATE 921600
 #define FRAME_LOG_INTERVAL 10
 #define FAILURE_LOG_INTERVAL 5
 #define WIFI_STATUS_LOG_INTERVAL 50

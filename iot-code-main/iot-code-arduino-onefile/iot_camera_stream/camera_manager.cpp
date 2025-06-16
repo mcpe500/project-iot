@@ -75,19 +75,19 @@ void initCamera() {
     
     // Upgrade to 720p if PSRAM available
     if (psramFound()) {
-      delay(2000);
-      Serial.println("Upgrading to 720p...");
-      s->set_framesize(s, FRAMESIZE_HD);  // Enable 720p for PSRAM systems
+      // delay(2000);
+      // Serial.println("Upgrading to 720p...");
+      // s->set_framesize(s, FRAMESIZE_HD);  // Enable 720p for PSRAM systems
       s->set_quality(s, JPEG_QUALITY_PSRAM);
-      s->set_contrast(s, 1);
-      s->set_gainceiling(s, (gainceiling_t)4);
-      s->set_bpc(s, 1);
-      s->set_wpc(s, 1);
-      s->set_raw_gma(s, 1);
-      s->set_lenc(s, 1);
-      s->set_dcw(s, 1);
-      s->set_aec_value(s, 400);
-      Serial.println("Camera upgraded to 720p");
+      // s->set_contrast(s, 1);
+      // s->set_gainceiling(s, (gainceiling_t)4);
+      // s->set_bpc(s, 1);
+      // s->set_wpc(s, 1);
+      // s->set_raw_gma(s, 1);
+      // s->set_lenc(s, 1);
+      // s->set_dcw(s, 1);
+      // s->set_aec_value(s, 400);
+      // Serial.println("Camera upgraded to 720p");
     }
   }
 }
