@@ -10,7 +10,7 @@
 // ===========================
 
 void initCamera() {
-  Serial.println("Initializing OV5640 camera...");
+  Serial.println("Initializing OV5640 camera for 800x600 High-Speed Stream...");
   
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -32,7 +32,9 @@ void initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = XCLK_FREQ_HZ;
-  config.frame_size = FRAMESIZE_VGA;
+  
+  // config.frame_size = FRAMESIZE_960X540; // <<< SET TO 960x540 RESOLUTION
+  config.frame_size = FRAMESIZE_SVGA; // <<< SET TO 800x600 RESOLUTION
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.jpeg_quality = JPEG_QUALITY_INITIAL;
@@ -43,7 +45,7 @@ void initCamera() {
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.jpeg_quality = JPEG_QUALITY_PSRAM;
     config.fb_count = FB_COUNT_PSRAM;
-    Serial.println("PSRAM found - using optimized settings");
+    Serial.println("PSRAM found - using 800x600 optimized settings");
   } else {
     config.fb_location = CAMERA_FB_IN_DRAM;
     config.jpeg_quality = JPEG_QUALITY_DRAM;
@@ -63,8 +65,10 @@ void initCamera() {
   // Configure sensor
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    // Basic settings
-    s->set_framesize(s, FRAMESIZE_VGA);
+    // s->set_framesize(s, FRAMESIZE_960X540);  // <<< ENSURE 960x540 IS SET
+    s->set_framesize(s, FRAMESIZE_SVGA);  // <<< ENSURE 800x600 IS SET
+    
+    s->set_quality(s, JPEG_QUALITY_PSRAM);    // Use our new lower quality setting
     s->set_brightness(s, 0);
     s->set_contrast(s, 0);
     s->set_saturation(s, 0);
@@ -199,54 +203,52 @@ bool sendFrameWithRetry(camera_fb_t* fb) {
   return false;
 }
 
+// This new version uses the HTTPClient's built-in streaming capabilities
+// for a non-blocking upload, which is far more efficient.
 bool sendFrameToURL(camera_fb_t* fb, const char* url, int timeout_ms) {
-  if (!fb || fb->len == 0 || !url) return false;
-  if (WiFi.status() != WL_CONNECTED) return false;
+    if (!fb || fb->len == 0 || !url) return false;
+    if (WiFi.status() != WL_CONNECTED) return false;
 
-  http.begin(client, url);
-  http.addHeader("X-API-Key", API_KEY);
-  http.setTimeout(timeout_ms);
-  
-  String boundary = "----ESP32CAMBoundary";
-  String header = "--" + boundary + "\r\n"
-                  "Content-Disposition: form-data; name=\"image\"; filename=\"frame.jpg\"\r\n"
-                  "Content-Type: image/jpeg\r\n\r\n";
-  String footer = "\r\n--" + boundary + "--\r\n";
-  
-  size_t totalLength = header.length() + fb->len + footer.length();
-  
-  // Always try the complete payload method first for simplicity
-  uint8_t* payload = (uint8_t*)malloc(totalLength);
-  if (payload) {
-    memcpy(payload, header.c_str(), header.length());
-    memcpy(payload + header.length(), fb->buf, fb->len);
-    memcpy(payload + header.length() + fb->len, footer.c_str(), footer.length());
+    http.begin(client, url);
+    http.addHeader("X-API-Key", API_KEY);
     
+    String boundary = "----ESP32CAMBoundary";
     http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-    int httpCode = http.POST(payload, totalLength);
-    free(payload);
+
+    String header = "--" + boundary + "\r\n"
+                    "Content-Disposition: form-data; name=\"image\"; filename=\"frame.jpg\"\r\n"
+                    "Content-Type: image/jpeg\r\n\r\n";
+    String footer = "\r\n--" + boundary + "--\r\n";
     
-    // Only log errors periodically to avoid spam
-    if (httpCode != 200 && frameCount % FAILURE_LOG_INTERVAL == 0) {
-      Serial.printf("HTTP Error: %d for URL: %s\n", httpCode, url);
-      if (httpCode > 0) {
-        String response = http.getString();
-        Serial.printf("Error response: %s\n", response.substring(0, 100).c_str());
-      } else {
-        Serial.printf("Request failed: %s\n", http.errorToString(httpCode).c_str());
-      }
-    }
+    size_t totalLength = header.length() + fb->len + footer.length();
+
+    // Start the request and send the first part (the multipart header)
+    // The HTTPClient library will handle sending the rest as a stream.
+    int httpCode = http.sendRequest("POST", (uint8_t*)header.c_str(), header.length());
     
-    http.end();
-    return (httpCode == 200);
-  } else {
-    // Memory allocation failed
-    if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-      Serial.printf("Memory allocation failed for frame upload (size: %d)\n", totalLength);
+    // If the server is ready to receive the file, stream the data
+    if (httpCode == HTTP_CODE_CONTINUE) {
+        // Stream the image buffer itself
+        client.write(fb->buf, fb->len);
+        // Stream the multipart form footer
+        client.print(footer);
+    } else {
+        if (frameCount % FAILURE_LOG_INTERVAL == 0) {
+            Serial.printf("HTTP Error on starting request: %s\n", http.errorToString(httpCode).c_str());
+        }
+        http.end();
+        return false;
     }
+
+    // Get the final response from the server after all data has been sent
+    bool success = (httpCode == 200);
+
+    if (!success && frameCount % FAILURE_LOG_INTERVAL == 0) {
+        Serial.printf("HTTP Error on final response: %d - %s\n", httpCode, http.errorToString(httpCode).c_str());
+    }
+
     http.end();
-    return false;
-  }
+    return success;
 }
 
 // Legacy function - now uses the retry logic
@@ -490,20 +492,14 @@ void resetCameraToOptimalSettings() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
   
-  Serial.println("🔄 Resetting camera to optimal settings");
+  Serial.println("🔄 Resetting camera to optimal 800x600 settings");
   
-  // Restore optimal settings
   thermalAdjustedFPS = TARGET_FPS;
   thermalAdjustedQuality = JPEG_QUALITY_PSRAM;
   
-  // Restore framesize to 720p if PSRAM available
-  if (psramFound()) {
-    s->set_framesize(s, FRAMESIZE_HD);
-  } else {
-    s->set_framesize(s, FRAMESIZE_VGA);
-  }
-  
-  // Restore optimal quality
+  // ENSURE WE RESET TO THE CORRECT RESOLUTION
+  // s->set_framesize(s, FRAMESIZE_960X540);
+  s->set_framesize(s, FRAMESIZE_SVGA);
   s->set_quality(s, JPEG_QUALITY_PSRAM);
   
   // Restore optimal sensor settings

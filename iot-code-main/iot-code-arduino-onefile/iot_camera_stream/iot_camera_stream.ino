@@ -130,38 +130,26 @@ void setup() {
 }
 
 void loop() {
+  // --- REMOVE THE FRAME INTERVAL CHECK ---
+  // This lets the loop run as fast as the hardware and network physically allow,
+  // which is what we want for maximum performance.
+  captureAndSendFrame();
+  
+  // These other tasks will run between frame captures, which is perfect.
   unsigned long currentTime = millis();
-  
-  // Calculate dynamic frame interval based on thermal conditions
-  unsigned long frameInterval = (1000.0 / thermalAdjustedFPS);
-  
-  // Frame capture and transmission with thermal adjustment
-  if (currentTime - lastFrameTime >= frameInterval) {
-    captureAndSendFrame();
-    lastFrameTime = currentTime;
-  }
-  
-  // Heartbeat transmission
   if (currentTime - lastHeartbeatTime >= HEARTBEAT_INTERVAL_MS) {
     sendHeartbeat();
     lastHeartbeatTime = currentTime;
   }
-  
-  // Performance statistics
   if (currentTime - lastStatsTime >= STATS_INTERVAL_MS) {
     printPerformanceStats();
     lastStatsTime = currentTime;
   }
-  
-  // WiFi connection monitoring
   checkWiFiConnection();
   
-  // Memory management and watchdog
-  if (frameCount % GC_INTERVAL_FRAMES == 0) {
-    ESP.getFreeHeap(); // Trigger garbage collection
-  }
-  
-  delay(WATCHDOG_FEED_DELAY_MS); // Feed watchdog
+  // A tiny delay can prevent the watchdog timer from resetting the ESP
+  // in very tight, high-speed loops. Start with 1.
+  delay(1); 
 }
 
 // ===========================

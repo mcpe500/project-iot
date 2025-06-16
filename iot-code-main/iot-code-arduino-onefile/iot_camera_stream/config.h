@@ -55,7 +55,7 @@
 // ===========================
 // Performance Configuration
 // ===========================
-#define TARGET_FPS 30
+#define TARGET_FPS 10
 #define FRAME_INTERVAL_MS (1000 / TARGET_FPS)
 #define HEARTBEAT_INTERVAL_MS 30000
 #define STATS_INTERVAL_MS 5000
@@ -85,12 +85,12 @@
 #define XCLK_FREQ_HZ 20000000
 
 // Quality settings
-#define JPEG_QUALITY_PSRAM 6
-#define JPEG_QUALITY_DRAM 12
-#define JPEG_QUALITY_INITIAL 10
+#define JPEG_QUALITY_PSRAM 30
+#define JPEG_QUALITY_DRAM 40
+#define JPEG_QUALITY_INITIAL 35
 
 // Buffer settings
-#define FB_COUNT_PSRAM 2
+#define FB_COUNT_PSRAM 3
 #define FB_COUNT_DRAM 1
 
 // ===========================
