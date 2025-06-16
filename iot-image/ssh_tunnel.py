@@ -1,4 +1,4 @@
-import asyncio
+# ssh_tunnel.py
 import logging
 import os
 import socket
@@ -8,292 +8,170 @@ from pathlib import Path
 from typing import Optional
 
 import paramiko
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 class SSHTunnel:
     """SSH Reverse Tunnel implementation using paramiko"""
     
-    def __init__(self, 
-                 public_vps_ip: str = None, # Renamed from public_vps_ip for clarity in signature
-                 ssh_server_port: int = None, # Added for SSH connection port
-                 ssh_user: str = None,
+    def __init__(self,
+                 public_vps_ip: str,
+                 ssh_server_port: int,
+                 ssh_user: str,
+                 public_port: int,
+                 private_server_port: int,
                  ssh_password: str = None,
                  private_key_path: str = None,
-                 passphrase: str = None,
-                 public_port: int = None, # Renamed from remote_port for clarity, this is tunnel's public listening port
-                 private_server_port: int = None): # This is the local service port
+                 passphrase: str = None):
         
-        # Load from environment if not provided, using names from .env.example
-        self.public_vps_ip = public_vps_ip or os.getenv('PUBLIC_VPS_IP')
-        self.ssh_server_port = ssh_server_port or int(os.getenv('SSH_SERVER_PORT', '22')) # SSH connection port
-        self.ssh_user = ssh_user or os.getenv('SSH_USER', 'root')
-        self.ssh_password = ssh_password or os.getenv('SSH_PASSWORD')
+        self.public_vps_ip = public_vps_ip
+        self.ssh_server_port = ssh_server_port
+        self.ssh_user = ssh_user
+        self.ssh_password = ssh_password
         self.private_key_path = private_key_path or os.getenv('SSH_PRIVATE_KEY_PATH')
         self.passphrase = passphrase or os.getenv('SSH_PASSPHRASE')
         
-        self.public_port = public_port or int(os.getenv('PUBLIC_PORT', '9005')) # Tunnel's public listening port
-        self.private_server_port = private_server_port or int(os.getenv('PRIVATE_SERVER_PORT', '9001')) # Local service port
+        self.public_port = public_port
+        self.private_server_port = private_server_port
         
         self.ssh_client = None
         self.transport = None
-        self.is_connected = False
+        self.is_active = False
         self.should_reconnect = True
         self.tunnel_thread = None
         
         if not self.public_vps_ip:
-            raise ValueError("PUBLIC_VPS_IP is required but not provided")
+            raise ValueError("PUBLIC_VPS_IP is required")
     
     def _resolve_path(self, path: str) -> str:
-        """Resolve paths like ~/.ssh/id_rsa to absolute paths"""
-        if not path:
-            return path
-        if path.startswith('~/'):
-            return str(Path.home() / path[2:])
-        return str(Path(path).resolve())
+        if not path: return path
+        return str(Path(path).expanduser().resolve())
     
     def _get_ssh_key(self) -> Optional[paramiko.PKey]:
-        """Load SSH private key if available"""
-        if not self.private_key_path:
-            return None
-        
+        if not self.private_key_path: return None
         key_path = self._resolve_path(self.private_key_path)
-        
         try:
-            # Try different key types
-            for key_class in [paramiko.RSAKey, paramiko.DSSKey, paramiko.ECDSAKey, paramiko.Ed25519Key]:
+            for key_class in [paramiko.RSAKey, paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.DSSKey]:
                 try:
                     return key_class.from_private_key_file(key_path, password=self.passphrase)
-                except paramiko.PasswordRequiredException:
-                    logger.error(f"Private key {key_path} requires a passphrase")
-                    return None
                 except Exception:
                     continue
-            
             logger.error(f"Unable to load private key from {key_path}")
             return None
-            
         except Exception as e:
             logger.error(f"Error loading private key: {e}")
             return None
+
     def _handle_tunnel_connection(self, channel, origin, server):
-        """Handle incoming connections through the tunnel"""
         try:
-            logger.info(f"Incoming tunnel connection from {origin}")
-            
-            # Connect to local service
             local_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            local_socket.settimeout(10)
-            try:
-                local_socket.connect(('localhost', self.private_server_port))
-                logger.info(f"Connected to local service on port {self.private_server_port}")
-            except Exception as e:
-                logger.error(f"Failed to connect to local service on port {self.private_server_port}: {e}")
-                logger.error(f"Make sure the FastAPI service is running on localhost:{self.private_server_port}")
-                channel.close()
-                local_socket.close()
-                return
-            
-            # Create bidirectional data forwarding with better error handling
-            def forward_data(source, destination, direction):
-                try:
-                    buffer_size = 4096
-                    while True:
-                        try:
-                            data = source.recv(buffer_size)
-                            if not data:
-                                logger.debug(f"No more data to forward ({direction})")
-                                break
-                            destination.send(data)
-                        except socket.timeout:
-                            continue
-                        except (socket.error, OSError) as e:
-                            logger.debug(f"Socket error in forwarding ({direction}): {e}")
-                            break
-                except Exception as e:
-                    logger.debug(f"Forwarding stopped ({direction}): {e}")
-                finally:
-                    try:
-                        source.close()
-                        destination.close()
-                    except:
-                        pass
-            
-            # Start forwarding threads
-            thread1 = threading.Thread(
-                target=forward_data, 
-                args=(channel, local_socket, "tunnel->local"),
-                daemon=True
-            )
-            thread2 = threading.Thread(
-                target=forward_data, 
-                args=(local_socket, channel, "local->tunnel"),
-                daemon=True
-            )
-            
-            thread1.start()
-            thread2.start()
-            
-            # Wait for threads to complete
-            thread1.join()
-            thread2.join()
-            
-            logger.debug(f"Tunnel connection from {origin} closed")
-            
+            local_socket.connect(('127.0.0.1', self.private_server_port))
+
+            def forward(src, dest, direction):
+                while True:
+                    data = src.recv(1024)
+                    if not data: break
+                    dest.sendall(data)
+                src.close()
+                dest.close()
+
+            threading.Thread(target=forward, args=(channel, local_socket, "fwd"), daemon=True).start()
+            threading.Thread(target=forward, args=(local_socket, channel, "rev"), daemon=True).start()
         except Exception as e:
-            logger.error(f"Error handling tunnel connection: {e}")
-        finally:
-            try:
-                channel.close()
-                local_socket.close()
-            except:
-                pass
-    
+            logger.error(f"Error handling tunnel connection from {origin}: {e}")
+            channel.close()
+
     def connect(self) -> bool:
-        """Establish SSH connection and setup reverse tunnel"""
         try:
-            logger.info(f"Connecting to {self.ssh_user}@{self.public_vps_ip}...")
-            
-            # Create SSH client
+            logger.info(f"Connecting to {self.ssh_user}@{self.public_vps_ip}:{self.ssh_server_port}...")
             self.ssh_client = paramiko.SSHClient()
             self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
-            # Prepare authentication
             connect_kwargs = {
                 'hostname': self.public_vps_ip,
-                'port': self.ssh_server_port, # Use configurable SSH server port
+                'port': self.ssh_server_port,
                 'username': self.ssh_user,
                 'timeout': 20,
                 'allow_agent': False,
                 'look_for_keys': False
             }
             
-            # Try key authentication first
             ssh_key = self._get_ssh_key()
             if ssh_key:
-                logger.info("Attempting SSH connection using private key")
+                logger.info("Attempting SSH connection using private key.")
                 connect_kwargs['pkey'] = ssh_key
             elif self.ssh_password:
-                logger.info("Attempting SSH connection using password")
+                logger.info("Attempting SSH connection using password.")
                 connect_kwargs['password'] = self.ssh_password
             else:
-                logger.error("No authentication method provided")
+                logger.error("No SSH authentication method available (password or private key).")
                 return False
-            
-            # Connect
+
             self.ssh_client.connect(**connect_kwargs)
             self.transport = self.ssh_client.get_transport()
+            self.transport.set_keepalive(60)
             
-            # Set SSH keepalive
-            if self.transport and self.transport.is_active():
-                try:
-                    # Send keepalive packets every 60 seconds, max 3 unanswered probes before considering connection dead
-                    logger.info("Setting SSH keepalive (interval: 60s, max_probes: 3)")
-                    self.transport.set_keepalive(interval=60, count_max=3)
-                except Exception as e:
-                    logger.warning(f"Could not set SSH keepalive: {e}")
-
-            logger.info("SSH connection established")
+            logger.info("SSH connection established. Setting up reverse tunnel...")
+            self.transport.request_port_forward('', self.public_port, handler=self._handle_tunnel_connection)
             
-            # Setup reverse tunnel
-            try:
-                self.transport.request_port_forward('', self.public_port, 
-                                                  handler=self._handle_tunnel_connection)
-                logger.info(f"Reverse tunnel established: {self.public_vps_ip}:{self.public_port} -> localhost:{self.private_server_port}")
-                self.is_connected = True
-                return True
-                
-            except Exception as e:
-                logger.error(f"Failed to setup reverse tunnel: {e}")
-                self.ssh_client.close()
-                return False
-                
-        except paramiko.AuthenticationException:
-            logger.error("SSH authentication failed")
-        except paramiko.SSHException as e:
-            logger.error(f"SSH connection error: {e}")
+            logger.info(f"Reverse tunnel established: {self.public_vps_ip}:{self.public_port} -> localhost:{self.private_server_port}")
+            self.is_active = True
+            return True
+            
         except Exception as e:
-            logger.error(f"Unexpected error during SSH connection: {e}")
-        
-        return False
-    
+            logger.error(f"Failed to establish SSH connection or tunnel: {e}", exc_info=True)
+            self.is_active = False
+            if self.ssh_client: self.ssh_client.close()
+            return False
+
     def disconnect(self):
-        """Close SSH connection"""
         self.should_reconnect = False
-        self.is_connected = False
-        
+        self.is_active = False
+        if self.transport and self.transport.is_active():
+            self.transport.cancel_port_forward('', self.public_port)
         if self.ssh_client:
-            try:
-                self.ssh_client.close()
-            except:
-                pass
-            self.ssh_client = None
-        
-        logger.info("SSH tunnel disconnected")
+            self.ssh_client.close()
+        logger.info("SSH tunnel disconnected.")
     
-    def start_tunnel(self):
-        """Start SSH tunnel with auto-reconnect"""
+    def start(self):
         def tunnel_worker():
             while self.should_reconnect:
-                try:
-                    if not self.is_connected:
-                        if self.connect():
-                            # Keep connection alive
-                            while self.is_connected and self.should_reconnect:
-                                if self.transport and self.transport.is_active():
-                                    time.sleep(10)  # Check every 10 seconds
-                                else:
-                                    logger.warning("SSH connection lost")
-                                    self.is_connected = False
-                                    break
-                        else:
-                            logger.info("Retrying SSH connection in 10 seconds...")
-                            time.sleep(10)
-                    else:
-                        time.sleep(1)
-                        
-                except Exception as e:
-                    logger.error(f"Tunnel worker error: {e}")
-                    self.is_connected = False
-                    time.sleep(10)
+                if not (self.transport and self.transport.is_active()):
+                    self.is_active = False
+                    logger.info("Tunnel is down, attempting to reconnect...")
+                    self.connect()
+                time.sleep(15) # Check connection status every 15 seconds
         
         self.tunnel_thread = threading.Thread(target=tunnel_worker, daemon=True)
         self.tunnel_thread.start()
-        logger.info("SSH tunnel thread started")
+        logger.info("SSH tunnel monitor thread started.")
     
-    def stop_tunnel(self):
-        """Stop SSH tunnel"""
+    def stop(self):
         self.disconnect()
         if self.tunnel_thread and self.tunnel_thread.is_alive():
             self.tunnel_thread.join(timeout=5)
 
-
-# Global tunnel instance
+# --- Global Singleton Management ---
 _tunnel_instance: Optional[SSHTunnel] = None
 
 def create_ssh_tunnel(**kwargs) -> Optional[SSHTunnel]:
-    """Create and start SSH tunnel"""
     global _tunnel_instance
-    
+    if _tunnel_instance:
+        logger.warning("SSH tunnel already exists.")
+        return _tunnel_instance
     try:
         _tunnel_instance = SSHTunnel(**kwargs)
-        _tunnel_instance.start_tunnel()
+        _tunnel_instance.start()
         return _tunnel_instance
     except Exception as e:
         logger.error(f"Failed to create SSH tunnel: {e}")
         return None
 
 def get_tunnel_instance() -> Optional[SSHTunnel]:
-    """Get the current tunnel instance"""
     return _tunnel_instance
 
 def stop_ssh_tunnel():
-    """Stop the SSH tunnel"""
     global _tunnel_instance
     if _tunnel_instance:
-        _tunnel_instance.stop_tunnel()
+        _tunnel_instance.stop()
         _tunnel_instance = None
