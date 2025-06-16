@@ -34,7 +34,7 @@ void initCamera() {
   config.xclk_freq_hz = XCLK_FREQ_HZ;
   
   // --- HYBRID CONFIGURATION FOR OPTIMAL PERFORMANCE ---
-  config.frame_size = FRAMESIZE_SVGA;      // 800x600 resolution
+  config.frame_size = FRAMESIZE_VGA;       // 640x480 for better performance (was SVGA 800x600)
   
   #if USE_RAW_STREAMING
     config.pixel_format = PIXFORMAT_RGB565;  // Raw pixels for maximum speed
@@ -42,7 +42,7 @@ void initCamera() {
   #else
     config.pixel_format = PIXFORMAT_JPEG;    // Optimized JPEG for reliability
     config.jpeg_quality = JPEG_QUALITY_OPTIMIZED;
-    Serial.println("Using optimized JPEG streaming mode");
+    Serial.println("Using optimized JPEG streaming mode with aggressive compression");
   #endif
   
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
@@ -74,27 +74,28 @@ void initCamera() {
   // Configure sensor for optimal image quality
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    s->set_framesize(s, FRAMESIZE_SVGA);
+    s->set_framesize(s, FRAMESIZE_VGA);  // VGA for better performance
     
     #if !USE_RAW_STREAMING
-      s->set_quality(s, JPEG_QUALITY_HIGH);
+      s->set_quality(s, JPEG_QUALITY_OPTIMIZED);  // Aggressive compression for speed
     #endif
     
-    // Optimize sensor settings for both raw and JPEG
+    // Optimize sensor settings for high FPS
     s->set_brightness(s, 0);
-    s->set_contrast(s, 1);     // Slight contrast boost
+    s->set_contrast(s, 0);     // Reset contrast for speed
     s->set_saturation(s, 0);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
     s->set_exposure_ctrl(s, 1);
+    s->set_aec_value(s, 300);  // Lower exposure for faster processing
     s->set_gain_ctrl(s, 1);
-    s->set_gainceiling(s, (gainceiling_t)4);
-    s->set_bpc(s, 1);
-    s->set_wpc(s, 1);
-    s->set_raw_gma(s, 1);
-    s->set_lenc(s, 1);
+    s->set_gainceiling(s, (gainceiling_t)2);  // Lower gain for speed
+    s->set_bpc(s, 0);          // Disable some processing for speed
+    s->set_wpc(s, 0);
+    s->set_raw_gma(s, 0);
+    s->set_lenc(s, 0);
     
-    Serial.println("Camera configured for optimal streaming");
+    Serial.println("Camera configured for HIGH-SPEED streaming");
   }
 }
 
@@ -163,43 +164,21 @@ bool sendFrameWithRetry(camera_fb_t* fb) {
   if (!fb || fb->len == 0) return false;
   if (WiFi.status() != WL_CONNECTED) return false;
   
-  // Try primary server first with reduced timeout
-  for (int retry = 0; retry < MAX_SERVER_RETRIES; retry++) {
-    int timeout = HTTP_TIMEOUT_MS - (retry * SERVER_TIMEOUT_REDUCTION_STEP);
-    if (timeout < 2000) timeout = 2000; // Minimum 2 seconds
-    
-    if (frameCount % FRAME_LOG_INTERVAL == 0) {
-      Serial.printf("Attempting upload to primary server (retry %d/%d, timeout: %dms)\n", 
-                    retry + 1, MAX_SERVER_RETRIES, timeout);
-    }
-    
-    if (sendFrameToURL(fb, SERVER_URL, timeout)) {
-      if (frameCount % FRAME_LOG_INTERVAL == 0) {
-        Serial.println("✅ Primary server upload successful");
-      }
-      return true;
-    }
-    
-    delay(500 * (retry + 1)); // Progressive delay: 500ms, 1s, 1.5s
+  // Single attempt with reduced timeout for maximum speed
+  if (frameCount % FRAME_LOG_INTERVAL == 0) {
+    Serial.printf("Uploading frame (size: %lu bytes) with fast timeout\n", fb->len);
   }
   
-  // If primary server fails and fallback is enabled
-  if (USE_FALLBACK_ON_ERROR) {
-    if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-      Serial.println("Primary server failed, trying fallback server...");
+  if (sendFrameToURL(fb, SERVER_URL, HTTP_TIMEOUT_MS)) {
+    if (frameCount % FRAME_LOG_INTERVAL == 0) {
+      Serial.println("✅ Upload successful");
     }
-    
-    if (sendFrameToURL(fb, FALLBACK_SERVER_URL, 3000)) {
-      if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-        Serial.println("✅ Fallback server upload successful");
-      }
-      return true;
-    }
+    return true;
   }
   
   // Log failure details periodically
   if (frameCount % FAILURE_LOG_INTERVAL == 0) {
-    Serial.printf("❌ All upload attempts failed for frame #%lu\n", frameCount);
+    Serial.printf("❌ Upload failed for frame #%lu (size: %lu bytes)\n", frameCount, fb->len);
   }
   
   return false;
@@ -521,24 +500,25 @@ void resetCameraToOptimalSettings() {
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
   
-  Serial.println("🔄 Resetting camera to optimal RAW 800x600 settings");
+  Serial.println("🔄 Resetting camera to optimal VGA settings for speed");
   
   thermalAdjustedFPS = TARGET_FPS;
   
-  // ENSURE WE RESET TO THE CORRECT RESOLUTION
-  s->set_framesize(s, FRAMESIZE_SVGA);
+  // ENSURE WE RESET TO VGA FOR SPEED
+  s->set_framesize(s, FRAMESIZE_VGA);
+  s->set_quality(s, JPEG_QUALITY_OPTIMIZED);  // High compression number for speed
   
-  // Restore optimal sensor settings
-  s->set_gainceiling(s, (gainceiling_t)4);
-  s->set_aec_value(s, 400);
+  // Restore fast settings
+  s->set_gainceiling(s, (gainceiling_t)2);  // Lower for speed
+  s->set_aec_value(s, 300);
   s->set_brightness(s, 0);
-  s->set_contrast(s, 1);
+  s->set_contrast(s, 0);
   s->set_saturation(s, 0);
   
-  // Restore image processing
-  s->set_bpc(s, 1);
-  s->set_wpc(s, 1);
-  s->set_raw_gma(s, 1);
-  s->set_lenc(s, 1);
-  s->set_dcw(s, 1);
+  // Disable processing for speed
+  s->set_bpc(s, 0);
+  s->set_wpc(s, 0);
+  s->set_raw_gma(s, 0);
+  s->set_lenc(s, 0);
+  s->set_dcw(s, 0);
 }

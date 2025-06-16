@@ -60,7 +60,7 @@
 // ===========================
 // Performance Configuration
 // ===========================
-#define TARGET_FPS 15 // <<< SET A REALISTIC TARGET FOR RAW STREAMING
+#define TARGET_FPS 10 // <<< LOWER TARGET FOR REALISTIC PERFORMANCE
 #define FRAME_INTERVAL_MS (1000 / TARGET_FPS)
 #define HEARTBEAT_INTERVAL_MS 30000
 #define STATS_INTERVAL_MS 5000
@@ -91,9 +91,9 @@
 
 // --- HYBRID APPROACH: SUPPORT BOTH RAW AND JPEG ---
 // Use JPEG for reliability, RAW for maximum performance
-#define USE_RAW_STREAMING false  // Set to true for raw RGB565, false for optimized JPEG
-#define JPEG_QUALITY_OPTIMIZED 20  // Fast compression for high FPS
-#define JPEG_QUALITY_HIGH 8        // High quality for face recognition
+#define USE_RAW_STREAMING true  // Set to true for raw RGB565, false for optimized JPEG
+#define JPEG_QUALITY_OPTIMIZED 35  // Much higher number = lower quality = smaller files = faster upload
+#define JPEG_QUALITY_HIGH 25       // Higher number = lower quality but much faster
 
 // Buffer settings - optimized for both modes
 #define FB_COUNT_PSRAM 3  // Use 3 buffers for maximum throughput
@@ -102,12 +102,12 @@
 // ===========================
 // Network Settings
 // ===========================
-#define HTTP_TIMEOUT_MS 5000
+#define HTTP_TIMEOUT_MS 3000  // Reduced timeout for faster failures
 #define WIFI_RETRY_COUNT 30
 #define CHUNK_SIZE 1024
-#define USE_FALLBACK_ON_ERROR true
-#define MAX_SERVER_RETRIES 3
-#define SERVER_TIMEOUT_REDUCTION_STEP 2000
+#define USE_FALLBACK_ON_ERROR false  // Disable fallback for speed
+#define MAX_SERVER_RETRIES 1  // Only 1 retry for speed
+#define SERVER_TIMEOUT_REDUCTION_STEP 1000
 
 // ===========================
 // Debug Configuration
