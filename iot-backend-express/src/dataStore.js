@@ -158,7 +158,7 @@ class DataStore {
       const { default: fetch } = await import('node-fetch');
       
       const form = new FormData();
-      form.append('image', imageBuffer, { // Changed 'file' to 'image'
+      form.append('image', imageBuffer, { // This field name must match the FastAPI endpoint
         filename: 'frame.jpg',
         contentType: 'image/jpeg'
       });
