@@ -1,4 +1,4 @@
-// Buzzer, HC-SR04, DHT11, and LDR Sensor Control for ESP32
+// Buzzer, HC-SR04, DHT11, LDR Sensor and LCD Display Control for ESP32
 #define BUZZER_PIN 25
 #define TRIG_PIN 19
 #define ECHO_PIN 18
@@ -6,7 +6,14 @@
 #define DHT_TYPE DHT11
 #define LDR_PIN 32
 
+// LCD Display (Software SPI)
+#define LCD_SCK_PIN  2  // E on LCD
+#define LCD_MOSI_PIN 4  // R/W on LCD
+#define LCD_CS_PIN   5  // RS on LCD
+#define LCD_RST_PIN  15 // RST on LCD
+
 #include <DHT.h>  // Include DHT library
+#include <U8g2lib.h>  // Include U8g2 library for LCD
 
 // State machine states
 enum BuzzerState {
@@ -28,6 +35,9 @@ unsigned long lastSensorRead = 0;
 const unsigned long sensorInterval = 2000;  // Read sensors every 2 seconds
 DHT dht(DHT_PIN, DHT_TYPE);  // Initialize DHT sensor
 
+// Initialize U8g2 for ST7920 in SPI Mode
+U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ LCD_SCK_PIN, /* data=*/ LCD_MOSI_PIN, /* cs=*/ LCD_CS_PIN, /* reset=*/ LCD_RST_PIN);
+
 // Buzzer enable/disable flag (set to false to mute buzzer)
 bool buzzerEnabled = false;
 
@@ -38,7 +48,16 @@ void setup() {
   digitalWrite(BUZZER_PIN, LOW);
   Serial.begin(115200);  // Initialize serial for debugging
   
-  dht.begin();  // Start DHT sensor
+  // Start sensors and display
+  dht.begin();
+  u8g2.begin();
+
+  // Display a startup message
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_ncenB10_tr); // Choose a font
+  u8g2.drawStr(10, 36, "System Starting...");
+  u8g2.sendBuffer();
+  delay(2000);
 }
 
 void loop() {
@@ -47,6 +66,7 @@ void loop() {
   // Handle sensor reading (non-blocking)
   if (currentMillis - lastSensorRead >= sensorInterval) {
     readSensors();
+    updateDisplay();
     lastSensorRead = currentMillis;
   }
   
@@ -102,6 +122,50 @@ void readSensors() {
     Serial.print("Temperature: ");
     Serial.print(temperature);
     Serial.println(" °C");
+  }
+  
+  // Update LCD display with sensor data
+  void updateDisplay() {
+    char buffer[16]; // A small buffer to format strings
+  
+    u8g2.clearBuffer();                 // Clear the internal memory
+    u8g2.setFont(u8g2_font_ncenB08_tr); // Set a nice, readable font
+  
+    // Display Distance
+    sprintf(buffer, "Dist: %.1f cm", distance);
+    u8g2.drawStr(0, 12, buffer);
+  
+    // Display Temperature
+    sprintf(buffer, "Temp: %.1f C", temperature);
+    u8g2.drawStr(0, 28, buffer);
+    
+    // Display Humidity
+    sprintf(buffer, "Humi: %.1f %%", humidity);
+    u8g2.drawStr(0, 44, buffer);
+  
+    // Display Light Level
+    sprintf(buffer, "Light: %d", lightLevel);
+    u8g2.drawStr(0, 60, buffer);
+    
+    u8g2.sendBuffer(); // Transfer the internal memory to the display
+  }
+  
+  // Read distance from HC-SR04 sensor
+  float readDistanceSensor() {
+    // Clear the trigger
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    
+    // Send 10µs pulse to trigger
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+    
+    // Measure pulse duration on echo pin
+    long duration = pulseIn(ECHO_PIN, HIGH);
+    
+    // Calculate distance in cm (speed of sound = 0.034 cm/µs)
+    return duration * 0.034 / 2;
   }
   
   if (!isnan(humidity)) {
