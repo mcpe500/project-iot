@@ -1,5 +1,7 @@
-// Buzzer control for ESP32
+// Buzzer and HC-SR04 Sensor Control for ESP32
 #define BUZZER_PIN 25
+#define TRIG_PIN 19
+#define ECHO_PIN 18
 
 // State machine states
 enum BuzzerState {
@@ -16,14 +18,28 @@ const unsigned long pause1Duration = 1000;
 const unsigned long beepLongDuration = 500;
 const unsigned long pause3Duration = 3000;
 
+// Sensor variables
+unsigned long lastSensorRead = 0;
+const unsigned long sensorInterval = 500;  // Read sensor every 500ms
+
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
+  Serial.begin(115200);  // Initialize serial for debugging
 }
 
 void loop() {
   unsigned long currentMillis = millis();
   
+  // Handle sensor reading (non-blocking)
+  if (currentMillis - lastSensorRead >= sensorInterval) {
+    readDistanceSensor();
+    lastSensorRead = currentMillis;
+  }
+  
+  // Handle buzzer state machine
   switch (currentState) {
     case STATE_BEEP_SHORT:
       digitalWrite(BUZZER_PIN, HIGH);
@@ -57,4 +73,27 @@ void loop() {
       }
       break;
   }
+}
+
+// Read distance from HC-SR04 sensor
+void readDistanceSensor() {
+  // Clear the trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  
+  // Send 10µs pulse to trigger
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  // Measure pulse duration on echo pin
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  
+  // Calculate distance in cm (speed of sound = 0.034 cm/µs)
+  float distance = duration * 0.034 / 2;
+  
+  // Print for debugging (optional)
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
 }
