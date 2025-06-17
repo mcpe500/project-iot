@@ -1,6 +1,7 @@
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
+const db = require('./database');
 
 // Ensure directories exist
 const dataDir = path.join(__dirname, '../data');

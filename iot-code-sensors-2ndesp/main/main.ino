@@ -41,6 +41,18 @@ U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ LCD_SCK_PIN, /* data=*/ LC
 // Buzzer enable/disable flag (set to false to mute buzzer)
 bool buzzerEnabled = false;
 
+// Global sensor variables for display
+float distance = 0.0;
+float temperature = 0.0;
+float humidity = 0.0;
+int lightLevel = 0;
+
+// Function declarations (prototypes)
+void readSensors();
+void updateDisplay();
+float readDistanceSensor();
+
+
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
@@ -65,8 +77,8 @@ void loop() {
   
   // Handle sensor reading (non-blocking)
   if (currentMillis - lastSensorRead >= sensorInterval) {
-    readSensors();
-    updateDisplay();
+    readSensors(); // This will update global sensor variables
+    updateDisplay(); // This will use global sensor variables
     lastSensorRead = currentMillis;
   }
   
@@ -109,63 +121,19 @@ void loop() {
 // Read all sensors
 void readSensors() {
   // Read and print distance
-  float distance = readDistanceSensor();
+  distance = readDistanceSensor(); // Assign to global variable
   Serial.print("Distance: ");
   Serial.print(distance);
   Serial.println(" cm");
   
   // Read and print temperature and humidity
-  float temperature = dht.readTemperature();
-  float humidity = dht.readHumidity();
+  temperature = dht.readTemperature(); // Assign to global variable
+  humidity = dht.readHumidity();    // Assign to global variable
   
   if (!isnan(temperature)) {
     Serial.print("Temperature: ");
     Serial.print(temperature);
     Serial.println(" °C");
-  }
-  
-  // Update LCD display with sensor data
-  void updateDisplay() {
-    char buffer[16]; // A small buffer to format strings
-  
-    u8g2.clearBuffer();                 // Clear the internal memory
-    u8g2.setFont(u8g2_font_ncenB08_tr); // Set a nice, readable font
-  
-    // Display Distance
-    sprintf(buffer, "Dist: %.1f cm", distance);
-    u8g2.drawStr(0, 12, buffer);
-  
-    // Display Temperature
-    sprintf(buffer, "Temp: %.1f C", temperature);
-    u8g2.drawStr(0, 28, buffer);
-    
-    // Display Humidity
-    sprintf(buffer, "Humi: %.1f %%", humidity);
-    u8g2.drawStr(0, 44, buffer);
-  
-    // Display Light Level
-    sprintf(buffer, "Light: %d", lightLevel);
-    u8g2.drawStr(0, 60, buffer);
-    
-    u8g2.sendBuffer(); // Transfer the internal memory to the display
-  }
-  
-  // Read distance from HC-SR04 sensor
-  float readDistanceSensor() {
-    // Clear the trigger
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
-    
-    // Send 10µs pulse to trigger
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
-    
-    // Measure pulse duration on echo pin
-    long duration = pulseIn(ECHO_PIN, HIGH);
-    
-    // Calculate distance in cm (speed of sound = 0.034 cm/µs)
-    return duration * 0.034 / 2;
   }
   
   if (!isnan(humidity)) {
@@ -175,9 +143,35 @@ void readSensors() {
   }
   
   // Read and print light level
-  int lightLevel = analogRead(LDR_PIN);
+  lightLevel = analogRead(LDR_PIN); // Assign to global variable
   Serial.print("Light Level: ");
   Serial.println(lightLevel);
+}
+
+// Update LCD display with sensor data
+void updateDisplay() {
+  char buffer[16]; // A small buffer to format strings
+
+  u8g2.clearBuffer();                 // Clear the internal memory
+  u8g2.setFont(u8g2_font_ncenB08_tr); // Set a nice, readable font
+
+  // Display Distance
+  sprintf(buffer, "Dist: %.1f cm", distance);
+  u8g2.drawStr(0, 12, buffer);
+
+  // Display Temperature
+  sprintf(buffer, "Temp: %.1f C", temperature);
+  u8g2.drawStr(0, 28, buffer);
+  
+  // Display Humidity
+  sprintf(buffer, "Humi: %.1f %%", humidity);
+  u8g2.drawStr(0, 44, buffer);
+
+  // Display Light Level
+  sprintf(buffer, "Light: %d", lightLevel);
+  u8g2.drawStr(0, 60, buffer);
+  
+  u8g2.sendBuffer(); // Transfer the internal memory to the display
 }
 
 // Read distance from HC-SR04 sensor
