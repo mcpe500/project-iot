@@ -1,4 +1,49 @@
 // Buzzer, HC-SR04, DHT11, LDR Sensor and LCD Display Control for ESP32
+// WITH IoT Backend Integration
+
+#include <Preferences.h>
+
+// Network Libraries
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+
+// Persistent storage for configuration
+Preferences preferences;
+
+// =================================================================
+// --- CONFIGURATION STRUCTURE ---
+struct Config {
+  char ssid[32];
+  char password[64];
+  char serverIp[16];
+  int serverPort;
+  char deviceId[32];
+  char deviceName[32];
+  char deviceType[32];
+};
+
+Config config;
+
+// Default configuration values
+const Config defaultConfig = {
+  "YOUR_WIFI_SSID",
+  "YOUR_WIFI_PASSWORD",
+  "203.175.11.145",
+  9005,
+  "esp32-multi-sensor-1",
+  "Lab Sensor Unit",
+  "DHT11-LDR-HCSR04"
+};
+
+// Timing intervals
+const unsigned long sensorInterval = 2000;  // Read sensors every 2 seconds
+const unsigned long sendInterval = 15000;   // Send data every 15 seconds
+unsigned long lastSendMillis = 0;
+bool deviceRegistered = false;
+// =================================================================
+
+// Hardware pin definitions
 #define BUZZER_PIN 25
 #define TRIG_PIN 19
 #define ECHO_PIN 18
@@ -53,12 +98,45 @@ void updateDisplay();
 float readDistanceSensor();
 
 
+// Configuration functions
+void loadConfig() {
+  preferences.begin("config", false);
+  
+  // Load configuration or use defaults
+  strlcpy(config.ssid, preferences.getString("ssid", defaultConfig.ssid).c_str(), sizeof(config.ssid));
+  strlcpy(config.password, preferences.getString("password", defaultConfig.password).c_str(), sizeof(config.password));
+  strlcpy(config.serverIp, preferences.getString("serverIp", defaultConfig.serverIp).c_str(), sizeof(config.serverIp));
+  config.serverPort = preferences.getInt("serverPort", defaultConfig.serverPort);
+  strlcpy(config.deviceId, preferences.getString("deviceId", defaultConfig.deviceId).c_str(), sizeof(config.deviceId));
+  strlcpy(config.deviceName, preferences.getString("deviceName", defaultConfig.deviceName).c_str(), sizeof(config.deviceName));
+  strlcpy(config.deviceType, preferences.getString("deviceType", defaultConfig.deviceType).c_str(), sizeof(config.deviceType));
+  
+  preferences.end();
+}
+
+void saveConfig() {
+  preferences.begin("config", false);
+  
+  preferences.putString("ssid", config.ssid);
+  preferences.putString("password", config.password);
+  preferences.putString("serverIp", config.serverIp);
+  preferences.putInt("serverPort", config.serverPort);
+  preferences.putString("deviceId", config.deviceId);
+  preferences.putString("deviceName", config.deviceName);
+  preferences.putString("deviceType", config.deviceType);
+  
+  preferences.end();
+}
+
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
   Serial.begin(115200);  // Initialize serial for debugging
+
+  // Load configuration
+  loadConfig();
   
   // Start sensors and display
   dht.begin();
@@ -69,17 +147,33 @@ void setup() {
   u8g2.setFont(u8g2_font_ncenB10_tr); // Choose a font
   u8g2.drawStr(10, 36, "System Starting...");
   u8g2.sendBuffer();
+  
+  // Connect to WiFi
+  connectToWifi();
+  
+  // Register device with backend
+  registerDevice();
+  
   delay(2000);
 }
 
 void loop() {
   unsigned long currentMillis = millis();
   
+  // Check for configuration updates
+  checkForConfigUpdate();
+  
   // Handle sensor reading (non-blocking)
   if (currentMillis - lastSensorRead >= sensorInterval) {
     readSensors(); // This will update global sensor variables
     updateDisplay(); // This will use global sensor variables
     lastSensorRead = currentMillis;
+  }
+  
+  // Handle data sending (non-blocking)
+  if (currentMillis - lastSendMillis >= sendInterval) {
+    sendSensorData();
+    lastSendMillis = currentMillis;
   }
   
   // Handle buzzer state machine
@@ -172,6 +266,132 @@ void updateDisplay() {
   u8g2.drawStr(0, 60, buffer);
   
   u8g2.sendBuffer(); // Transfer the internal memory to the display
+}
+
+// Network functions
+void checkForConfigUpdate() {
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    if (input.startsWith("CONFIG:")) {
+      // Example: CONFIG:ssid=MyWiFi,password=secret,serverIp=192.168.1.100
+      String configStr = input.substring(7);
+      int start = 0;
+      int end = configStr.indexOf(',');
+      
+      while (end != -1) {
+        String pair = configStr.substring(start, end);
+        int equals = pair.indexOf('=');
+        if (equals != -1) {
+          String key = pair.substring(0, equals);
+          String value = pair.substring(equals + 1);
+          
+          if (key == "ssid") {
+            strlcpy(config.ssid, value.c_str(), sizeof(config.ssid));
+          } else if (key == "password") {
+            strlcpy(config.password, value.c_str(), sizeof(config.password));
+          } else if (key == "serverIp") {
+            strlcpy(config.serverIp, value.c_str(), sizeof(config.serverIp));
+          } else if (key == "serverPort") {
+            config.serverPort = value.toInt();
+          } else if (key == "deviceId") {
+            strlcpy(config.deviceId, value.c_str(), sizeof(config.deviceId));
+          } else if (key == "deviceName") {
+            strlcpy(config.deviceName, value.c_str(), sizeof(config.deviceName));
+          } else if (key == "deviceType") {
+            strlcpy(config.deviceType, value.c_str(), sizeof(config.deviceType));
+          }
+        }
+        start = end + 1;
+        end = configStr.indexOf(',', start);
+      }
+      saveConfig();
+      Serial.println("Configuration updated successfully");
+    }
+  }
+}
+
+void connectToWifi() {
+  Serial.print("Connecting to WiFi ");
+  Serial.print(config.ssid);
+  WiFi.begin(config.ssid, config.password);
+  int retries = 0;
+  while (WiFi.status() != WL_CONNECTED && retries < 30) {
+    delay(500);
+    Serial.print(".");
+    retries++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nFailed to connect. Please check credentials and restart.");
+  }
+}
+
+void registerDevice() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  
+  HTTPClient http;
+  String serverUrl = "http://" + String(config.serverIp) + ":" + String(config.serverPort) + "/api/v1/devices/register";
+  http.begin(serverUrl);
+  http.addHeader("Content-Type", "application/json");
+
+  JsonDocument doc;
+  doc["id"] = deviceId;
+  doc["name"] = deviceName;
+  doc["type"] = deviceType;
+  doc["ipAddress"] = WiFi.localIP().toString();
+
+  JsonArray caps = doc["capabilities"].to<JsonArray>();
+  caps.add("temperature");
+  caps.add("humidity");
+  caps.add("distance");
+  caps.add("lightLevel");
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+
+  int httpCode = http.POST(jsonPayload);
+  Serial.print("Registering device... ");
+  if (httpCode > 0) {
+    Serial.printf("Response: %d\n", httpCode);
+    deviceRegistered = true;
+  } else {
+    Serial.printf("Error: %s\n", http.errorToString(httpCode).c_str());
+  }
+  http.end();
+}
+
+void sendSensorData() {
+  if (WiFi.status() != WL_CONNECTED || !deviceRegistered) return;
+
+  // Create JSON payload
+  JsonDocument doc;
+  doc["deviceId"] = config.deviceId;
+  doc["timestamp"] = millis();
+  doc["temperature"] = temperature;
+  doc["humidity"] = humidity;
+  doc["distance"] = distance;
+  doc["lightLevel"] = lightLevel;
+
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+  Serial.println("Sending payload: " + jsonPayload);
+
+  // Send HTTP POST request
+  HTTPClient http;
+  String serverUrl = "http://" + String(serverIp) + ":" + String(serverPort) + "/api/v1/ingest/sensor-data";
+  http.begin(serverUrl);
+  http.addHeader("Content-Type", "application/json");
+
+  int httpResponseCode = http.POST(jsonPayload);
+  if (httpResponseCode > 0) {
+    Serial.printf("Sensor data sent. HTTP Response: %d\n", httpResponseCode);
+  } else {
+    Serial.printf("Error sending sensor data. Code: %s\n", http.errorToString(httpResponseCode).c_str());
+  }
+  http.end();
 }
 
 // Read distance from HC-SR04 sensor

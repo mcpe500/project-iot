@@ -1,143 +1,101 @@
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
-const db = require('./database');
+const db = require('./database'); // Your knex instance for MySQL
 
-// Ensure directories exist
 const dataDir = path.join(__dirname, '../data');
 const recordingsDir = path.join(__dirname, '../recordings');
 const permittedFacesDir = path.join(__dirname, '../permitted_faces');
 
 [dataDir, recordingsDir, permittedFacesDir].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Simplified face recognition - delegated to Python service
-let faceRecognitionEnabled = false;
-
-// Function to clean up old recordings
 function cleanupOldRecordings(directory, maxAgeMs) {
   fs.readdir(directory, (err, files) => {
     if (err) {
-      console.error("Error reading data directory for cleanup:", err);
+      console.error("Error reading directory for cleanup:", err);
       return;
     }
-
     const now = Date.now();
     files.forEach(file => {
       const parts = file.split('_');
-      if (parts.length >= 2) {
-        const timestampStr = parts[parts.length - 1].split('.')[0];
-        const timestamp = parseInt(timestampStr, 10);
-        if (!isNaN(timestamp) && (now - timestamp > maxAgeMs)) {
-          const filePath = path.join(directory, file);
-          fs.unlink(filePath, unlinkErr => {
-            if (unlinkErr) {
-              console.error(`Error deleting old file ${filePath}:`, unlinkErr);
-            } else {
-              console.log(`Deleted old file: ${filePath}`);
-            }
-          });
-        }
+      if (parts.length < 2) return;
+      const timestamp = parseInt(parts[parts.length - 1].split('.')[0], 10);
+      if (!isNaN(timestamp) && (now - timestamp > maxAgeMs)) {
+        const filePath = path.join(directory, file);
+        fs.unlink(filePath, unlinkErr => {
+          if (unlinkErr) console.error(`Error deleting ${filePath}:`, unlinkErr);
+          else console.log(`Deleted old file: ${filePath}`);
+        });
       }
     });
   });
 }
 
-// Data store implementation
 class DataStore {
   constructor() {
-    this.devices = new Map();
-    this.sensorData = new Map();
-    this.commands = new Map();
-    this.notes = new Map();
-    this.nextNoteId = 1;
-    
-    console.log('DataStore initialized - Face recognition delegated to Python service');
-    
-    // Setup automatic cleanup
-    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-    const FRAME_MAX_AGE_MS = 10 * 60 * 1000;   // 10 minutes
-    
+    console.log('DataStore initialized with MySQL connection.');
+    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+    const FRAME_MAX_AGE_MS = 10 * 60 * 1000;
     setInterval(() => {
-      console.log(`Running scheduled cleanup of old frames (older than ${FRAME_MAX_AGE_MS / 60000} mins)...`);
+      console.log(`Running scheduled cleanup of old frames...`);
       cleanupOldRecordings(dataDir, FRAME_MAX_AGE_MS);
     }, CLEANUP_INTERVAL_MS);
   }
 
-  // Device operations
-  updateDevice(deviceId, updates) {
-    const device = this.devices.get(deviceId);
-    if (device) {
-      Object.assign(device, updates, { lastSeen: Date.now() });
-      this.devices.set(deviceId, device);
-      return device;
-    }
-    return null;
-  }
-
-  registerDevice(device) {
-    const existingDevice = this.devices.get(device.id);
-    if (existingDevice) {
-      const updatedDevice = {
-        ...existingDevice,
-        ...device,
-        lastSeen: Date.now()
-      };
-      this.devices.set(device.id, updatedDevice);
-      return updatedDevice;
-    } else {
-      const newDevice = {
-        ...device,
-        status: device.status || 'online',
-        lastSeen: Date.now(),
-        errors: 0
-      };
-      this.devices.set(device.id, newDevice);
-      return newDevice;
-    }
-  }
-
-  getDevice(deviceId) {
-    return this.devices.get(deviceId);
-  }
-
-  getAllDevices() {
-    return Array.from(this.devices.values());
-  }
-
-  getSystemStatus() {
-    return {
-      devicesOnline: this.getAllDevices().filter(d => d.status === 'online').length,
-      devicesTotal: this.devices.size,
-      uptime: process.uptime(),
-      timestamp: Date.now()
+  // --- DEVICE OPERATIONS (DATABASE) ---
+  async registerDevice(device) {
+    const deviceData = {
+      id: device.id,
+      name: device.name,
+      type: device.type,
+      ipAddress: device.ipAddress,
+      status: device.status || 'online',
+      lastSeen: Date.now(),
+      capabilities: JSON.stringify(device.capabilities || [])
     };
+    await db('devices').insert(deviceData).onConflict('id').merge();
+    return this.getDevice(device.id);
   }
 
-  getDeviceStatusSummary() {
-    const devices = this.getAllDevices();
-    return {
-      total: devices.length,
-      online: devices.filter(d => d.status === 'online').length,
-      offline: devices.filter(d => d.status === 'offline').length,
-      warning: devices.filter(d => d.status === 'warning').length,
-      error: devices.filter(d => d.status === 'error').length
+  async getDevice(deviceId) {
+    return db('devices').where('id', deviceId).first();
+  }
+
+  async getAllDevices() {
+    return db('devices').select('*').orderBy('lastSeen', 'desc');
+  }
+
+  async updateDevice(deviceId, updates) {
+    if (!deviceId) return null;
+    await db('devices').where('id', deviceId).update({ ...updates, lastSeen: Date.now() });
+    return this.getDevice(deviceId);
+  }
+
+  // --- SENSOR DATA OPERATIONS (DATABASE) ---
+  async saveSensorData(data) {
+    const payload = {
+      deviceId: data.deviceId,
+      timestamp: data.timestamp || Date.now(),
+      temperature: data.temperature,
+      humidity: data.humidity,
+      distance: data.distance,
+      lightLevel: data.lightLevel
     };
+    await db('sensor_data').insert(payload);
+    await this.updateDevice(data.deviceId, {}); // Also update the device's lastSeen timestamp
+    return payload;
   }
 
-  // Sensor data operations
-  saveSensorData(data) {
-    if (!this.sensorData.has(data.deviceId)) {
-      this.sensorData.set(data.deviceId, []);
-    }
-    this.sensorData.get(data.deviceId).push(data);
-    return data;
+  async getSensorData(deviceId, limit = 100) {
+    return db('sensor_data')
+      .where('deviceId', deviceId)
+      .orderBy('timestamp', 'desc')
+      .limit(limit);
   }
 
-  // GPU-accelerated face recognition via Python service
+  // --- FACE RECOGNITION (remains the same) ---
   async performFaceRecognition(imageBuffer) {
     const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
     const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
@@ -155,11 +113,10 @@ class DataStore {
 
     try {
       const FormData = require('form-data');
-      // Ensure you have node-fetch installed: npm install node-fetch
       const { default: fetch } = await import('node-fetch');
       
       const form = new FormData();
-      form.append('image', imageBuffer, { // This field name must match the FastAPI endpoint
+      form.append('image', imageBuffer, { 
         filename: 'frame.jpg',
         contentType: 'image/jpeg'
       });
@@ -170,7 +127,7 @@ class DataStore {
         method: 'POST',
         body: form,
         headers: form.getHeaders(),
-        timeout: 15000 // Increased timeout to 15 seconds
+        timeout: 15000 
       });
       
       console.log(`[Face Recognition] Response status from Python service: ${response.status}`);
@@ -179,9 +136,6 @@ class DataStore {
         const result = await response.json();
         console.log('[Face Recognition] Raw result from Python service:', result);
         
-        // Adapt based on the actual structure of a successful response from your Python service
-        // This structure assumes the Python service might return 'status', 'recognizedAs', 'confidence', 'faces_detected', 'processing_time'
-        // Or for older/different versions: 'status', 'recognized_faces' (array), 'faces_detected', 'processing_time'
         if (result.status === 'permitted_face' || (result.status === 'success' && result.recognized_faces && result.recognized_faces.length > 0)) {
           const faceName = result.recognizedAs || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].name : 'Unknown');
           const confidence = result.confidence || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].confidence : null);
@@ -245,11 +199,8 @@ class DataStore {
 
   async addPermittedFace(imageBuffer, subjectName) {
     try {
-      // Call Python service to add permitted face
       const FormData = require('form-data');
       const { default: fetch } = await import('node-fetch');
-      
-      // Get Python service URL from environment
       const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
       
       const form = new FormData();
@@ -269,10 +220,12 @@ class DataStore {
         const result = await response.json();
         return result;
       } else {
-        throw new Error('Failed to add permitted face via Python service');
+        const errorBody = await response.text();
+        console.error(`Error adding permitted face via Python service: ${response.status}`, errorBody);
+        throw new Error(`Failed to add permitted face via Python service. Status: ${response.status}. Body: ${errorBody}`);
       }
     } catch (error) {
-      console.error("Error adding permitted face:", error);
+      console.error("Error in addPermittedFace function:", error);
       throw error;
     }
   }
