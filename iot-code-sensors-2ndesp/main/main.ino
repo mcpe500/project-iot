@@ -1,7 +1,11 @@
-// Buzzer and HC-SR04 Sensor Control for ESP32
+// Buzzer, HC-SR04, and DHT11 Sensor Control for ESP32
 #define BUZZER_PIN 25
 #define TRIG_PIN 19
 #define ECHO_PIN 18
+#define DHT_PIN 23
+#define DHT_TYPE DHT11
+
+#include <DHT.h>  // Include DHT library
 
 // State machine states
 enum BuzzerState {
@@ -20,7 +24,11 @@ const unsigned long pause3Duration = 3000;
 
 // Sensor variables
 unsigned long lastSensorRead = 0;
-const unsigned long sensorInterval = 500;  // Read sensor every 500ms
+const unsigned long sensorInterval = 2000;  // Read sensors every 2 seconds
+DHT dht(DHT_PIN, DHT_TYPE);  // Initialize DHT sensor
+
+// Buzzer enable/disable flag (set to false to mute buzzer)
+bool buzzerEnabled = false;
 
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
@@ -28,6 +36,8 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
   Serial.begin(115200);  // Initialize serial for debugging
+  
+  dht.begin();  // Start DHT sensor
 }
 
 void loop() {
@@ -35,14 +45,14 @@ void loop() {
   
   // Handle sensor reading (non-blocking)
   if (currentMillis - lastSensorRead >= sensorInterval) {
-    readDistanceSensor();
+    readSensors();
     lastSensorRead = currentMillis;
   }
   
   // Handle buzzer state machine
   switch (currentState) {
     case STATE_BEEP_SHORT:
-      digitalWrite(BUZZER_PIN, HIGH);
+      if (buzzerEnabled) digitalWrite(BUZZER_PIN, HIGH);
       if (currentMillis - previousMillis >= beepShortDuration) {
         digitalWrite(BUZZER_PIN, LOW);
         previousMillis = currentMillis;
@@ -58,7 +68,7 @@ void loop() {
       break;
       
     case STATE_BEEP_LONG:
-      digitalWrite(BUZZER_PIN, HIGH);
+      if (buzzerEnabled) digitalWrite(BUZZER_PIN, HIGH);
       if (currentMillis - previousMillis >= beepLongDuration) {
         digitalWrite(BUZZER_PIN, LOW);
         previousMillis = currentMillis;
@@ -75,8 +85,33 @@ void loop() {
   }
 }
 
+// Read all sensors
+void readSensors() {
+  // Read and print distance
+  float distance = readDistanceSensor();
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+  
+  // Read and print temperature and humidity
+  float temperature = dht.readTemperature();
+  float humidity = dht.readHumidity();
+  
+  if (!isnan(temperature)) {
+    Serial.print("Temperature: ");
+    Serial.print(temperature);
+    Serial.println(" °C");
+  }
+  
+  if (!isnan(humidity)) {
+    Serial.print("Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
+  }
+}
+
 // Read distance from HC-SR04 sensor
-void readDistanceSensor() {
+float readDistanceSensor() {
   // Clear the trigger
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -90,10 +125,5 @@ void readDistanceSensor() {
   long duration = pulseIn(ECHO_PIN, HIGH);
   
   // Calculate distance in cm (speed of sound = 0.034 cm/µs)
-  float distance = duration * 0.034 / 2;
-  
-  // Print for debugging (optional)
-  Serial.print("Distance: ");
-  Serial.print(distance);
-  Serial.println(" cm");
+  return duration * 0.034 / 2;
 }
