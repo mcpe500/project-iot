@@ -1,9 +1,10 @@
-// Buzzer, HC-SR04, and DHT11 Sensor Control for ESP32
+// Buzzer, HC-SR04, DHT11, and LDR Sensor Control for ESP32
 #define BUZZER_PIN 25
 #define TRIG_PIN 19
 #define ECHO_PIN 18
 #define DHT_PIN 23
 #define DHT_TYPE DHT11
+#define LDR_PIN 32
 
 #include <DHT.h>  // Include DHT library
 
@@ -108,6 +109,11 @@ void readSensors() {
     Serial.print(humidity);
     Serial.println(" %");
   }
+  
+  // Read and print light level
+  int lightLevel = analogRead(LDR_PIN);
+  Serial.print("Light Level: ");
+  Serial.println(lightLevel);
 }
 
 // Read distance from HC-SR04 sensor
