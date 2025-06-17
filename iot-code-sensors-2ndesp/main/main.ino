@@ -1,49 +1,14 @@
-// Buzzer, HC-SR04, DHT11, LDR Sensor and LCD Display Control for ESP32
-// WITH IoT Backend Integration
+// Buzzer, HC-SR04, DHT11, and LDR Sensor Control for ESP32
+// WITH IoT Backend Integration using .env configuration
 
+// --- LIBRARIES ---
 #include <Preferences.h>
-
-// Network Libraries
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <DHT.h>
 
-// Persistent storage for configuration
-Preferences preferences;
-
-// =================================================================
-// --- CONFIGURATION STRUCTURE ---
-struct Config {
-  char ssid[32];
-  char password[64];
-  char serverIp[16];
-  int serverPort;
-  char deviceId[32];
-  char deviceName[32];
-  char deviceType[32];
-};
-
-Config config;
-
-// Default configuration values
-const Config defaultConfig = {
-  "YOUR_WIFI_SSID",
-  "YOUR_WIFI_PASSWORD",
-  "203.175.11.145",
-  9005,
-  "esp32-multi-sensor-1",
-  "Lab Sensor Unit",
-  "DHT11-LDR-HCSR04"
-};
-
-// Timing intervals
-const unsigned long sensorInterval = 2000;  // Read sensors every 2 seconds
-const unsigned long sendInterval = 15000;   // Send data every 15 seconds
-unsigned long lastSendMillis = 0;
-bool deviceRegistered = false;
-// =================================================================
-
-// Hardware pin definitions
+// --- HARDWARE PIN DEFINITIONS ---
 #define BUZZER_PIN 25
 #define TRIG_PIN 19
 #define ECHO_PIN 18
@@ -51,16 +16,36 @@ bool deviceRegistered = false;
 #define DHT_TYPE DHT11
 #define LDR_PIN 32
 
-// LCD Display (Software SPI)
-#define LCD_SCK_PIN  2  // E on LCD
-#define LCD_MOSI_PIN 4  // R/W on LCD
-#define LCD_CS_PIN   5  // RS on LCD
-#define LCD_RST_PIN  15 // RST on LCD
+// --- GLOBAL OBJECTS AND VARIABLES ---
 
-#include <DHT.h>  // Include DHT library
-#include <U8g2lib.h>  // Include U8g2 library for LCD
+// Persistent storage for configuration
+Preferences preferences;
 
-// State machine states
+// Configuration Structure (.env compatible)
+struct Config {
+  char wifiSsid[64];
+  char wifiPassword[64];
+  char serverIp[16];
+  int serverPort;
+  char deviceId[32];
+  char deviceName[64];
+  char deviceType[32];
+};
+
+Config config;
+
+// Default configuration values (matching .env.example)
+const Config defaultConfig = {
+  "your_wifi_ssid",           // WIFI_SSID
+  "your_wifi_password",       // WIFI_PASSWORD  
+  "192.168.1.100",           // SERVER_IP
+  3001,                      // SERVER_PORT
+  "esp32-multi-sensor-1",    // DEVICE_ID
+  "Lab Sensor Unit",         // DEVICE_NAME
+  "DHT11-LDR-HCSR04"        // DEVICE_TYPE
+};
+
+// State machine states for buzzer
 enum BuzzerState {
   STATE_BEEP_SHORT,
   STATE_PAUSE_1,
@@ -80,73 +65,51 @@ unsigned long lastSensorRead = 0;
 const unsigned long sensorInterval = 2000;  // Read sensors every 2 seconds
 DHT dht(DHT_PIN, DHT_TYPE);  // Initialize DHT sensor
 
-// Initialize U8g2 for ST7920 in SPI Mode
-U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ LCD_SCK_PIN, /* data=*/ LCD_MOSI_PIN, /* cs=*/ LCD_CS_PIN, /* reset=*/ LCD_RST_PIN);
+// Timing for backend communication
+unsigned long lastSendMillis = 0;
+const unsigned long sendInterval = 15000;   // Send data every 15 seconds
+bool deviceRegistered = false;
 
 // Buzzer enable/disable flag (set to false to mute buzzer)
 bool buzzerEnabled = false;
 
-// Global sensor variables for display
+// Global sensor variables for backend sending
 float distance = 0.0;
 float temperature = 0.0;
 float humidity = 0.0;
 int lightLevel = 0;
 
-// Function declarations (prototypes)
+// --- FUNCTION PROTOTYPES (Forward Declarations) ---
+void loadConfig();
+void saveConfig();
+void checkForConfigUpdate();
+void connectToWifi();
+void registerDevice();
+void sendSensorData();
 void readSensors();
-void updateDisplay();
 float readDistanceSensor();
 
 
-// Configuration functions
-void loadConfig() {
-  preferences.begin("config", false);
-  
-  // Load configuration or use defaults
-  strlcpy(config.ssid, preferences.getString("ssid", defaultConfig.ssid).c_str(), sizeof(config.ssid));
-  strlcpy(config.password, preferences.getString("password", defaultConfig.password).c_str(), sizeof(config.password));
-  strlcpy(config.serverIp, preferences.getString("serverIp", defaultConfig.serverIp).c_str(), sizeof(config.serverIp));
-  config.serverPort = preferences.getInt("serverPort", defaultConfig.serverPort);
-  strlcpy(config.deviceId, preferences.getString("deviceId", defaultConfig.deviceId).c_str(), sizeof(config.deviceId));
-  strlcpy(config.deviceName, preferences.getString("deviceName", defaultConfig.deviceName).c_str(), sizeof(config.deviceName));
-  strlcpy(config.deviceType, preferences.getString("deviceType", defaultConfig.deviceType).c_str(), sizeof(config.deviceType));
-  
-  preferences.end();
-}
-
-void saveConfig() {
-  preferences.begin("config", false);
-  
-  preferences.putString("ssid", config.ssid);
-  preferences.putString("password", config.password);
-  preferences.putString("serverIp", config.serverIp);
-  preferences.putInt("serverPort", config.serverPort);
-  preferences.putString("deviceId", config.deviceId);
-  preferences.putString("deviceName", config.deviceName);
-  preferences.putString("deviceType", config.deviceType);
-  
-  preferences.end();
-}
-
+// =================================================================
+// --- SETUP FUNCTION ---
+// =================================================================
 void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(BUZZER_PIN, LOW);
-  Serial.begin(115200);  // Initialize serial for debugging
-
-  // Load configuration
+  Serial.begin(921600);  // Initialize serial for debugging
+  
+  Serial.println("\n=== ESP32 IoT Sensor System ===");
+  Serial.println("Send 'CONFIG' to see current settings");
+  Serial.println("Send 'SET WIFI_SSID=YourWiFi' to update settings");
+  Serial.println("Send 'RESET' to restore defaults");
+  Serial.println("===============================\n");
+  
+  // Load configuration from flash memory
   loadConfig();
   
-  // Start sensors and display
-  dht.begin();
-  u8g2.begin();
-
-  // Display a startup message
-  u8g2.clearBuffer();
-  u8g2.setFont(u8g2_font_ncenB10_tr); // Choose a font
-  u8g2.drawStr(10, 36, "System Starting...");
-  u8g2.sendBuffer();
+  dht.begin();  // Start DHT sensor
   
   // Connect to WiFi
   connectToWifi();
@@ -154,19 +117,21 @@ void setup() {
   // Register device with backend
   registerDevice();
   
-  delay(2000);
+  Serial.println("System ready!");
 }
 
+// =================================================================
+// --- MAIN LOOP ---
+// =================================================================
 void loop() {
   unsigned long currentMillis = millis();
   
-  // Check for configuration updates
+  // Handle configuration updates via Serial
   checkForConfigUpdate();
   
   // Handle sensor reading (non-blocking)
   if (currentMillis - lastSensorRead >= sensorInterval) {
     readSensors(); // This will update global sensor variables
-    updateDisplay(); // This will use global sensor variables
     lastSensorRead = currentMillis;
   }
   
@@ -212,7 +177,126 @@ void loop() {
   }
 }
 
-// Read all sensors
+// =================================================================
+// --- HELPER FUNCTIONS ---
+// =================================================================
+
+// --- Configuration Functions ---
+void loadConfig() {
+  preferences.begin("config", false);
+  
+  // Load configuration or use defaults (.env style)
+  strlcpy(config.wifiSsid, preferences.getString("WIFI_SSID", defaultConfig.wifiSsid).c_str(), sizeof(config.wifiSsid));
+  strlcpy(config.wifiPassword, preferences.getString("WIFI_PASSWORD", defaultConfig.wifiPassword).c_str(), sizeof(config.wifiPassword));
+  strlcpy(config.serverIp, preferences.getString("SERVER_IP", defaultConfig.serverIp).c_str(), sizeof(config.serverIp));
+  config.serverPort = preferences.getInt("SERVER_PORT", defaultConfig.serverPort);
+  strlcpy(config.deviceId, preferences.getString("DEVICE_ID", defaultConfig.deviceId).c_str(), sizeof(config.deviceId));
+  strlcpy(config.deviceName, preferences.getString("DEVICE_NAME", defaultConfig.deviceName).c_str(), sizeof(config.deviceName));
+  strlcpy(config.deviceType, preferences.getString("DEVICE_TYPE", defaultConfig.deviceType).c_str(), sizeof(config.deviceType));
+  
+  preferences.end();
+  
+  // Print loaded configuration
+  Serial.println("=== Configuration Loaded ===");
+  Serial.printf("WIFI_SSID=%s\n", config.wifiSsid);
+  Serial.printf("WIFI_PASSWORD=%s\n", config.wifiPassword);
+  Serial.printf("SERVER_IP=%s\n", config.serverIp);
+  Serial.printf("SERVER_PORT=%d\n", config.serverPort);
+  Serial.printf("DEVICE_ID=%s\n", config.deviceId);
+  Serial.printf("DEVICE_NAME=%s\n", config.deviceName);
+  Serial.printf("DEVICE_TYPE=%s\n", config.deviceType);
+  Serial.println("============================");
+}
+
+void saveConfig() {
+  preferences.begin("config", false);
+  
+  preferences.putString("WIFI_SSID", config.wifiSsid);
+  preferences.putString("WIFI_PASSWORD", config.wifiPassword);
+  preferences.putString("SERVER_IP", config.serverIp);
+  preferences.putInt("SERVER_PORT", config.serverPort);
+  preferences.putString("DEVICE_ID", config.deviceId);
+  preferences.putString("DEVICE_NAME", config.deviceName);
+  preferences.putString("DEVICE_TYPE", config.deviceType);
+  
+  preferences.end();
+  Serial.println("Configuration saved to flash memory!");
+}
+
+void checkForConfigUpdate() {
+  if (Serial.available()) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    
+    if (input == "CONFIG") {
+      // Display current configuration
+      Serial.println("\n=== Current Configuration ===");
+      Serial.printf("WIFI_SSID=%s\n", config.wifiSsid);
+      Serial.printf("WIFI_PASSWORD=%s\n", config.wifiPassword);
+      Serial.printf("SERVER_IP=%s\n", config.serverIp);
+      Serial.printf("SERVER_PORT=%d\n", config.serverPort);
+      Serial.printf("DEVICE_ID=%s\n", config.deviceId);
+      Serial.printf("DEVICE_NAME=%s\n", config.deviceName);
+      Serial.printf("DEVICE_TYPE=%s\n", config.deviceType);
+      Serial.println("============================\n");
+      
+    } else if (input == "RESET") {
+      // Reset to defaults
+      memcpy(&config, &defaultConfig, sizeof(Config));
+      saveConfig();
+      Serial.println("Configuration reset to defaults. Restarting...");
+      delay(1000);
+      ESP.restart();
+      
+    } else if (input.startsWith("SET ")) {
+      // Parse SET command: SET WIFI_SSID=MyWiFi
+      String command = input.substring(4);
+      int equals = command.indexOf('=');
+      if (equals != -1) {
+        String key = command.substring(0, equals);
+        String value = command.substring(equals + 1);
+        
+        bool updated = false;
+        if (key == "WIFI_SSID") {
+          strlcpy(config.wifiSsid, value.c_str(), sizeof(config.wifiSsid));
+          updated = true;
+        } else if (key == "WIFI_PASSWORD") {
+          strlcpy(config.wifiPassword, value.c_str(), sizeof(config.wifiPassword));
+          updated = true;
+        } else if (key == "SERVER_IP") {
+          strlcpy(config.serverIp, value.c_str(), sizeof(config.serverIp));
+          updated = true;
+        } else if (key == "SERVER_PORT") {
+          config.serverPort = value.toInt();
+          updated = true;
+        } else if (key == "DEVICE_ID") {
+          strlcpy(config.deviceId, value.c_str(), sizeof(config.deviceId));
+          updated = true;
+        } else if (key == "DEVICE_NAME") {
+          strlcpy(config.deviceName, value.c_str(), sizeof(config.deviceName));
+          updated = true;
+        } else if (key == "DEVICE_TYPE") {
+          strlcpy(config.deviceType, value.c_str(), sizeof(config.deviceType));
+          updated = true;
+        }
+        
+        if (updated) {
+          saveConfig();
+          Serial.printf("Updated %s=%s\n", key.c_str(), value.c_str());
+          Serial.println("Send 'RESTART' to apply WiFi changes or they will apply on next boot.");
+        } else {
+          Serial.printf("Unknown configuration key: %s\n", key.c_str());
+        }
+      }
+    } else if (input == "RESTART") {
+      Serial.println("Restarting ESP32...");
+      delay(1000);
+      ESP.restart();
+    }
+  }
+}
+
+// --- Sensor Functions ---
 void readSensors() {
   // Read and print distance
   distance = readDistanceSensor(); // Assign to global variable
@@ -242,78 +326,28 @@ void readSensors() {
   Serial.println(lightLevel);
 }
 
-// Update LCD display with sensor data
-void updateDisplay() {
-  char buffer[16]; // A small buffer to format strings
-
-  u8g2.clearBuffer();                 // Clear the internal memory
-  u8g2.setFont(u8g2_font_ncenB08_tr); // Set a nice, readable font
-
-  // Display Distance
-  sprintf(buffer, "Dist: %.1f cm", distance);
-  u8g2.drawStr(0, 12, buffer);
-
-  // Display Temperature
-  sprintf(buffer, "Temp: %.1f C", temperature);
-  u8g2.drawStr(0, 28, buffer);
+float readDistanceSensor() {
+  // Clear the trigger
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
   
-  // Display Humidity
-  sprintf(buffer, "Humi: %.1f %%", humidity);
-  u8g2.drawStr(0, 44, buffer);
-
-  // Display Light Level
-  sprintf(buffer, "Light: %d", lightLevel);
-  u8g2.drawStr(0, 60, buffer);
+  // Send 10µs pulse to trigger
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
   
-  u8g2.sendBuffer(); // Transfer the internal memory to the display
+  // Measure pulse duration on echo pin
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  
+  // Calculate distance in cm (speed of sound = 0.034 cm/µs)
+  return duration * 0.034 / 2;
 }
 
-// Network functions
-void checkForConfigUpdate() {
-  if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    if (input.startsWith("CONFIG:")) {
-      // Example: CONFIG:ssid=MyWiFi,password=secret,serverIp=192.168.1.100
-      String configStr = input.substring(7);
-      int start = 0;
-      int end = configStr.indexOf(',');
-      
-      while (end != -1) {
-        String pair = configStr.substring(start, end);
-        int equals = pair.indexOf('=');
-        if (equals != -1) {
-          String key = pair.substring(0, equals);
-          String value = pair.substring(equals + 1);
-          
-          if (key == "ssid") {
-            strlcpy(config.ssid, value.c_str(), sizeof(config.ssid));
-          } else if (key == "password") {
-            strlcpy(config.password, value.c_str(), sizeof(config.password));
-          } else if (key == "serverIp") {
-            strlcpy(config.serverIp, value.c_str(), sizeof(config.serverIp));
-          } else if (key == "serverPort") {
-            config.serverPort = value.toInt();
-          } else if (key == "deviceId") {
-            strlcpy(config.deviceId, value.c_str(), sizeof(config.deviceId));
-          } else if (key == "deviceName") {
-            strlcpy(config.deviceName, value.c_str(), sizeof(config.deviceName));
-          } else if (key == "deviceType") {
-            strlcpy(config.deviceType, value.c_str(), sizeof(config.deviceType));
-          }
-        }
-        start = end + 1;
-        end = configStr.indexOf(',', start);
-      }
-      saveConfig();
-      Serial.println("Configuration updated successfully");
-    }
-  }
-}
-
+// --- Network Functions ---
 void connectToWifi() {
   Serial.print("Connecting to WiFi ");
-  Serial.print(config.ssid);
-  WiFi.begin(config.ssid, config.password);
+  Serial.print(config.wifiSsid);
+  WiFi.begin(config.wifiSsid, config.wifiPassword);
   int retries = 0;
   while (WiFi.status() != WL_CONNECTED && retries < 30) {
     delay(500);
@@ -338,9 +372,9 @@ void registerDevice() {
   http.addHeader("Content-Type", "application/json");
 
   JsonDocument doc;
-  doc["id"] = deviceId;
-  doc["name"] = deviceName;
-  doc["type"] = deviceType;
+  doc["id"] = config.deviceId;
+  doc["name"] = config.deviceName;
+  doc["type"] = config.deviceType;
   doc["ipAddress"] = WiFi.localIP().toString();
 
   JsonArray caps = doc["capabilities"].to<JsonArray>();
@@ -381,7 +415,7 @@ void sendSensorData() {
 
   // Send HTTP POST request
   HTTPClient http;
-  String serverUrl = "http://" + String(serverIp) + ":" + String(serverPort) + "/api/v1/ingest/sensor-data";
+  String serverUrl = "http://" + String(config.serverIp) + ":" + String(config.serverPort) + "/api/v1/ingest/sensor-data";
   http.begin(serverUrl);
   http.addHeader("Content-Type", "application/json");
 
@@ -392,22 +426,4 @@ void sendSensorData() {
     Serial.printf("Error sending sensor data. Code: %s\n", http.errorToString(httpResponseCode).c_str());
   }
   http.end();
-}
-
-// Read distance from HC-SR04 sensor
-float readDistanceSensor() {
-  // Clear the trigger
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  
-  // Send 10µs pulse to trigger
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  
-  // Measure pulse duration on echo pin
-  long duration = pulseIn(ECHO_PIN, HIGH);
-  
-  // Calculate distance in cm (speed of sound = 0.034 cm/µs)
-  return duration * 0.034 / 2;
 }
