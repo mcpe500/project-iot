@@ -37,22 +37,6 @@ module.exports = (sequelize) => {
       allowNull: true,
       comment: 'Light level reading (ADC value)'
     },
-    // Extensible for additional sensor types
-    pressure: {
-      type: DataTypes.FLOAT,
-      allowNull: true,
-      comment: 'Pressure reading in hPa'
-    },
-    altitude: {
-      type: DataTypes.FLOAT,
-      allowNull: true,
-      comment: 'Altitude reading in meters'
-    },
-    co2Level: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      comment: 'CO2 level in ppm'
-    },
     // Generic JSON field for custom sensor data
     customData: {
       type: DataTypes.JSON,
