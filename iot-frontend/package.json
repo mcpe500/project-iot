@@ -20,7 +20,6 @@
     "eas-cli": "^16.10.1",
     "expo": "53.0.11",
     "expo-audio": "^0.4.6",
-    "expo-av": "^15.1.6",
     "expo-blur": "~14.1.5",
     "expo-camera": "^16.1.8",
     "expo-constants": "~17.1.6",

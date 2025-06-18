@@ -85,46 +85,54 @@ const SensorDataPage: React.FC = () => {
     fetchDevices();
   }, []);
 
+  // Fetch and update sensor data periodically
   useEffect(() => {
     if (!selectedDevice) return;
-    let isMounted = true;
 
-    const fetchData = async () => {
-      if (!isMounted) return;
-      setLoading(true);
+    let isMounted = true;
+    const fetchInterval = setInterval(async () => {
       try {
         const response = await getSensorData(selectedDevice);
         if (isMounted) {
-          const data = Array.isArray(response.data) ? response.data : (response.data as any)?.data || [];
-          // Sort data by timestamp and keep the last 50 points
-          const sortedData = data.sort((a: SensorDataItem, b: SensorDataItem) => a.timestamp - b.timestamp).slice(-50);
-          setSensorData(sortedData);
+          // Handle API response structure
+          const data = Array.isArray(response.data) ?
+            response.data :
+            (Array.isArray((response.data as any)?.data) ?
+              (response.data as any).data : []);
+
+          setSensorData(data.sort((a: any, b: any) => a.timestamp - b.timestamp));
         }
       } catch (error) {
-        console.error('Error fetching initial sensor data:', error);
-      } finally {
-        if (isMounted) setLoading(false);
+        console.error('Error fetching sensor data:', error);
       }
-    };
+    }, 1000); // Update every second
 
-    fetchData();
-
-    // Setup WebSocket for real-time updates, removing the old setInterval
-    const ws = new WebSocket(`${CONFIG.WS_URL}sensor-updates`);
-    ws.onmessage = (event) => {
+    // Initial fetch
+    const fetchData = async () => {
       try {
-        const message: SensorUpdateMessage = JSON.parse(event.data);
-        if (message.deviceId === selectedDevice && isMounted) {
-          setSensorData(prev => [...prev.slice(-49), message]); // Efficiently keep array size at 50
+        setLoading(true);
+        const response = await getSensorData(selectedDevice);
+        if (isMounted) {
+          // Handle API response structure
+          const data = Array.isArray(response.data) ?
+            response.data :
+            (Array.isArray((response.data as any)?.data) ?
+              (response.data as any).data : []);
+          setSensorData(data.sort((a: any, b: any) => a.timestamp - b.timestamp));
         }
-      } catch (e) {
-        console.error('Error processing WebSocket message:', e);
+      } catch (error) {
+        console.error('Error fetching sensor data:', error);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
+    fetchData();
 
     return () => {
       isMounted = false;
-      ws.close();
+      clearInterval(fetchInterval);
     };
   }, [selectedDevice]);
 
@@ -132,13 +140,13 @@ const SensorDataPage: React.FC = () => {
 
   const prepareChartData = (metric: MetricKey) => {
     if (sensorData.length === 0) return { labels: [], datasets: [{ data: [0] }] };
-    
+
     return {
       labels: [], // Hide labels on the chart for a cleaner look
       datasets: [{
         data: sensorData.map(item => item[metric]),
         color: (opacity = 1) => {
-          switch(metric) {
+          switch (metric) {
             case 'temperature': return chartColors.temp;
             case 'humidity': return chartColors.humidity;
             case 'distance': return chartColors.distance;
@@ -207,7 +215,7 @@ const SensorDataPage: React.FC = () => {
       </View>
     );
   };
-  
+
   // --- Render Logic ---
 
   if (loading) {
@@ -226,7 +234,7 @@ const SensorDataPage: React.FC = () => {
       <ScrollView contentContainerStyle={styles.scrollContentContainer}>
         <View style={styles.header}>
           <Text style={styles.title}>Sensor Dashboard</Text>
-          <Text style={styles.subtitle}>Displaying data for</Text>
+          <Text style={styles.subtitle}>Displaying data for: {selectedDeviceName}</Text>
           <View style={styles.pickerContainer}>
             <Picker
               selectedValue={selectedDevice}
@@ -275,7 +283,7 @@ const createStyles = (colors: any, scheme: string) => StyleSheet.create({
   header: { marginBottom: 16, alignItems: 'stretch' },
   title: { fontSize: 32, fontWeight: 'bold', color: colors.text, textAlign: 'center' },
   subtitle: { fontSize: 16, color: colors.text, textAlign: 'center', opacity: 0.7, marginBottom: 16, marginTop: 4 },
-  
+
   pickerContainer: {
     backgroundColor: colors.card,
     borderRadius: 12,
@@ -316,10 +324,10 @@ const createStyles = (colors: any, scheme: string) => StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 18, fontWeight: '600', color: colors.text },
   valueText: { fontSize: 26, fontWeight: 'bold', color: colors.primary },
-  
+
   chartContainer: { height: 120, alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   chart: { marginLeft: -16 }, // Offset to make the chart fill the card width
-  
+
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -329,10 +337,10 @@ const createStyles = (colors: any, scheme: string) => StyleSheet.create({
     paddingTop: 16,
   },
   statText: { fontSize: 14, color: colors.text, opacity: 0.8 },
-  
+
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 50 },
   loadingText: { color: colors.text, fontSize: 16, marginTop: 10 },
-  
+
   noDataContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   noDataText: { color: colors.text, fontStyle: 'italic', opacity: 0.7 },
 });
