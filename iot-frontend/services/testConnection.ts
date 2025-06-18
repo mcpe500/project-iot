@@ -1,6 +1,6 @@
 // Test file to verify API configuration
 import api from './api';
-import { CONFIG } from '@/app/config';
+import { CONFIG } from '@/config';
 
 export const testAPIConnection = async () => {
   try {

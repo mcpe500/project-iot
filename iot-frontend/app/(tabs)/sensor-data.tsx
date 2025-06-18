@@ -5,7 +5,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { getSensorData, getDevices } from '@/services/api';
 import { Dimensions } from 'react-native';
-import { CONFIG } from '@/app/config';
+import { CONFIG } from '@/config';
 import { Picker } from '@react-native-picker/picker';
 
 // Define sensor data type

@@ -14,7 +14,7 @@ import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 // import { IconSymbol, IconName } from '@/components/IconSymbol';
-import { CONFIG } from '@/app/config';
+import { CONFIG } from '@/config';
 import { IconName } from '@/components/IconSymbol';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 

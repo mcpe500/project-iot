@@ -16,7 +16,7 @@ import axios from 'axios';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/IconSymbol';
-import { CONFIG } from '@/app/config';
+import { CONFIG } from '@/config';
 import { Video, ResizeMode } from 'expo-av';
 
 interface MediaItem {

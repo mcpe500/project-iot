@@ -1,71 +1,45 @@
-// Fallback for using MaterialIcons on Android and web.
+import { Ionicons } from '@expo/vector-icons';
+import React from 'react';
+import { StyleProp, TextStyle } from 'react-native';
 
-import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { SymbolWeight, SymbolViewProps } from 'expo-symbols';
-import { ComponentProps } from 'react';
-import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
+type IconName =
+  | 'camera' | 'camera.fill'
+  | 'chart.bar.xaxis' | 'chart.bar'
+  | 'cpu.fill' | 'cpu'
+  | 'play.rectangle.on.rectangle.fill' | 'play.rectangle.on.rectangle'
+  | 'video.fill' | 'video'
+  | 'lan-connect' | 'lan-disconnect'
+  | 'alert-circle-outline'
+  | 'refresh'
+  | 'wifi-off'
+  | string; // Allow any string as fallback
 
-type IconMapping = Record<string, ComponentProps<typeof MaterialIcons>['name']>;
-type IconSymbolName = string;
+const sfSymbolToIoniconsMap: Record<string, string> = {
+  'camera.fill': 'camera',
+  'camera': 'camera-outline',
+  'chart.bar.xaxis': 'bar-chart',
+  'chart.bar': 'bar-chart-outline',
+  'cpu.fill': 'hardware-chip',
+  'cpu': 'hardware-chip-outline',
+  'play.rectangle.on.rectangle.fill': 'play-circle',
+  'play.rectangle.on.rectangle': 'play-circle-outline',
+  'video.fill': 'videocam',
+  'video': 'videocam-outline',
+  'lan-connect': 'wifi',
+  'lan-disconnect': 'wifi-off-outline',
+  'alert-circle-outline': 'alert-circle-outline',
+  'refresh': 'refresh-outline',
+  'wifi-off': 'wifi-off'
+};
 
-/**
- * Add your SF Symbols to Material Icons mappings here.
- * - see Material Icons in the [Icons Directory](https://icons.expo.fyi).
- * - see SF Symbols in the [SF Symbols](https://developer.apple.com/sf-symbols/) app.
- */
-const MAPPING = {
-  'house.fill': 'home',
-  'paperplane.fill': 'send',
-  'chevron.left.forwardslash.chevron.right': 'code',
-  'chevron.right': 'chevron-right',
-  'symbol': 'code',
-  'function': 'functions',
-  'video': 'videocam',
-  'image': 'image',
-  'loading': 'autorenew',
-  'solid': 'crop-square',
-  'filter': 'filter',
-  'contain': 'fullscreen-exit',
-  'text': 'text-fields',
-  'cancel': 'cancel',
-  'repeat': 'repeat',
-  'anchor': 'anchor',
-  'link': 'link',
-  'at': 'alternate-email',
-  'sort': 'sort',
-  'map': 'map',
-  'details': 'details',
-  'head': 'headset',
-  'lan-connect': 'lan',
-  'lan-disconnect': 'lan-disconnected',
-  'alert-circle-outline': 'error-outline',
-  'refresh': 'refresh',
-  'antenna': 'antenna',
-  'information-circle-outline': 'info-outline',
-  'videocam-off-outline': 'videocam-off',
-  'refresh-outline': 'refresh',
-  'sync-outline': 'sync',
-  'film-outline': 'movie',
-  'images-outline': 'collections',
-  'blank': 'crop-free'
-} as any as IconMapping;
-
-/**
- * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.
- * This ensures a consistent look across platforms, and optimal resource usage.
- * Icon `name`s are based on SF Symbols and require manual mapping to Material Icons.
- */
-export function IconSymbol({
-  name,
-  size = 24,
-  color,
-  style,
-}: {
-  name: IconSymbolName;
-  size?: number;
-  color: string | OpaqueColorValue;
+type Props = {
+  name: IconName;
+  size: number;
+  color: string;
   style?: StyleProp<TextStyle>;
-  weight?: SymbolWeight;
-}) {
-  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
-}
+};
+
+export const IconSymbol: React.FC<Props> = ({ name, size, color, style }) => {
+  const iconName = sfSymbolToIoniconsMap[name] || 'help-circle-outline';
+  return <Ionicons name={iconName as any} size={size} color={color} style={style} />;
+};
