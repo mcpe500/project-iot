@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { CONFIG } from '@/app/config';
+import { CONFIG } from '@/config';
 
 // Type definitions
 interface DeviceRegistration {

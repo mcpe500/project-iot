@@ -1,18 +1,30 @@
-import { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
-import { PlatformPressable } from '@react-navigation/elements';
+import React from 'react';
+import { Pressable } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 
-export function HapticTab(props: BottomTabBarButtonProps) {
+/**
+ * A custom tab bar button that provides haptic feedback on press.
+ * It correctly handles props from React Navigation by only using what is
+ * necessary for the Pressable, avoiding type conflicts.
+ */
+export const HapticTab = (props: BottomTabBarButtonProps): React.ReactElement => {
+  // We destructure only the props we need. `children` contains the icon and label.
+  // This avoids passing down incompatible props (like 'ref') to the Pressable.
+  const { children, style, onPress } = props;
+
   return (
-    <PlatformPressable
-      {...props}
-      onPressIn={(ev) => {
-        if (process.env.EXPO_OS === 'ios') {
-          // Add a soft haptic feedback when pressing down on the tabs.
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        }
-        props.onPressIn?.(ev);
+    <Pressable
+      style={style} // The style from the navigator is crucial for layout.
+      onPress={(e) => {
+        // Provide haptic feedback. This is a "fire-and-forget" async call.
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+        // Call the original onPress function from the navigator if it exists.
+        onPress?.(e);
       }}
-    />
+    >
+      {children}
+    </Pressable>
   );
-}
+};
