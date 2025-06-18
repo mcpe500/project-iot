@@ -1,7 +1,7 @@
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
-const db = require('./database'); // Your knex instance for MySQL
+const { initializeDatabase, Device, SensorData } = require('./database');
 
 const dataDir = path.join(__dirname, '../data');
 const recordingsDir = path.join(__dirname, '../recordings');
@@ -35,17 +35,46 @@ function cleanupOldRecordings(directory, maxAgeMs) {
 
 class DataStore {
   constructor() {
-    console.log('DataStore initialized with MySQL connection.');
-    const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-    const FRAME_MAX_AGE_MS = 10 * 60 * 1000;
-    setInterval(() => {
-      console.log(`Running scheduled cleanup of old frames...`);
-      cleanupOldRecordings(dataDir, FRAME_MAX_AGE_MS);
-    }, CLEANUP_INTERVAL_MS);
+    console.log('📦 DataStore initialized. Database connection pending...');
+    this.sequelize = null; // Will be set when database is ready
+    this.Device = Device;
+    this.SensorData = SensorData;
+    this.dbReady = this.initializeDatabase();
+    this.initializeCleanup();
+  }
+
+  async initializeDatabase() {
+    try {
+      this.sequelize = await initializeDatabase();
+      console.log('✅ DataStore: Database connection ready.');
+      return this.sequelize;
+    } catch (error) {
+      console.error('❌ DataStore: Failed to initialize database:', error);
+      throw error;
+    }
+  }
+
+  async initializeCleanup() {
+    try {
+      // Wait for DB to be ready before starting cleanup
+      await this.dbReady;
+      console.log('🧹 Database connected. Starting cleanup scheduler.');
+      
+      const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+      const FRAME_MAX_AGE_MS = 10 * 60 * 1000;
+      setInterval(() => {
+        console.log(`Running scheduled cleanup of old frames...`);
+        cleanupOldRecordings(dataDir, FRAME_MAX_AGE_MS);
+      }, CLEANUP_INTERVAL_MS);
+    } catch (err) {
+      console.error('Failed to initialize cleanup scheduler:', err);
+    }
   }
 
   // --- DEVICE OPERATIONS (DATABASE) ---
   async registerDevice(device) {
+    await this.dbReady; // Ensure database is ready
+    
     const deviceData = {
       id: device.id,
       name: device.name,
@@ -53,46 +82,83 @@ class DataStore {
       ipAddress: device.ipAddress,
       status: device.status || 'online',
       lastSeen: Date.now(),
-      capabilities: JSON.stringify(device.capabilities || [])
+      capabilities: device.capabilities || []
     };
-    await db('devices').insert(deviceData).onConflict('id').merge();
-    return this.getDevice(device.id);
+    
+    // Use Sequelize upsert (update or insert)
+    const [deviceRecord, created] = await this.Device.upsert(deviceData, {
+      returning: true
+    });
+    
+    console.log(`${created ? '🆕 Registered' : '🔄 Updated'} device: ${device.id}`);
+    return deviceRecord;
   }
 
   async getDevice(deviceId) {
-    return db('devices').where('id', deviceId).first();
+    await this.dbReady; // Ensure database is ready
+    return await this.Device.findOne({
+      where: { id: deviceId }
+    });
   }
 
   async getAllDevices() {
-    return db('devices').select('*').orderBy('lastSeen', 'desc');
+    await this.dbReady; // Ensure database is ready
+    return await this.Device.findAll({
+      order: [['lastSeen', 'DESC']]
+    });
   }
 
   async updateDevice(deviceId, updates) {
     if (!deviceId) return null;
-    await db('devices').where('id', deviceId).update({ ...updates, lastSeen: Date.now() });
-    return this.getDevice(deviceId);
+    await this.dbReady; // Ensure database is ready
+    
+    const updateData = { ...updates, lastSeen: Date.now() };
+    await this.Device.update(updateData, {
+      where: { id: deviceId }
+    });
+    
+    return await this.getDevice(deviceId);
   }
 
   // --- SENSOR DATA OPERATIONS (DATABASE) ---
   async saveSensorData(data) {
+    await this.dbReady; // Ensure database is ready
+    
     const payload = {
       deviceId: data.deviceId,
       timestamp: data.timestamp || Date.now(),
       temperature: data.temperature,
       humidity: data.humidity,
       distance: data.distance,
-      lightLevel: data.lightLevel
+      lightLevel: data.lightLevel,
+      pressure: data.pressure,
+      altitude: data.altitude,
+      co2Level: data.co2Level,
+      customData: data.customData
     };
-    await db('sensor_data').insert(payload);
-    await this.updateDevice(data.deviceId, {}); // Also update the device's lastSeen timestamp
-    return payload;
+    
+    // Save sensor data
+    const sensorRecord = await this.SensorData.create(payload);
+    
+    // Update device's lastSeen timestamp
+    await this.updateDevice(data.deviceId, {});
+    
+    console.log(`💾 Saved sensor data for device: ${data.deviceId}`);
+    return sensorRecord;
   }
 
   async getSensorData(deviceId, limit = 100) {
-    return db('sensor_data')
-      .where('deviceId', deviceId)
-      .orderBy('timestamp', 'desc')
-      .limit(limit);
+    await this.dbReady; // Ensure database is ready
+    return await this.SensorData.findAll({
+      where: { deviceId },
+      order: [['timestamp', 'DESC']],
+      limit,
+      include: [{
+        model: this.Device,
+        as: 'device',
+        attributes: ['name', 'type']
+      }]
+    });
   }
 
   // --- FACE RECOGNITION (remains the same) ---

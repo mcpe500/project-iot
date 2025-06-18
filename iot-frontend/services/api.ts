@@ -1,6 +1,48 @@
 import axios from 'axios';
 import { CONFIG } from '@/app/config';
 
+// Type definitions
+interface DeviceRegistration {
+  id: string;
+  name: string;
+  type: string;
+  ipAddress: string;
+  capabilities: string[];
+}
+
+interface SensorData {
+  deviceId: string;
+  timestamp: number;
+  temperature: number;
+  humidity: number;
+  distance: number;
+  lightLevel: number;
+}
+
+interface CameraFrameHeaders {
+  'X-Device-ID': string;
+  'X-Frame-Width': number;
+  'X-Frame-Height': number;
+}
+
+interface DeviceInfo {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  lastSeen: number;
+}
+
+interface SensorDataResponse {
+  data: Array<{
+    timestamp: number;
+    temperature: number;
+    humidity: number;
+    distance: number;
+    lightLevel: number;
+  }>;
+}
+
 // Create axios instance with default configuration
 const api = axios.create({
   baseURL: CONFIG.BACKEND_URL,
@@ -14,7 +56,6 @@ const api = axios.create({
 // Add request interceptor to ensure API key is always included
 api.interceptors.request.use(
   (config) => {
-    // Always ensure API key is present
     config.headers['X-API-Key'] = CONFIG.API_KEY;
     console.log('🔐 API Request:', {
       method: config.method?.toUpperCase(),
@@ -71,5 +112,36 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Device Management API
+export const registerDevice = async (deviceData: DeviceRegistration) => {
+  return api.post('/api/v1/devices/register', deviceData);
+};
+
+export const getDevices = async (): Promise<{ devices: DeviceInfo[] }> => {
+  return api.get('/api/v1/devices');
+};
+
+// Sensor Data API
+export const ingestSensorData = async (sensorData: SensorData) => {
+  return api.post('/api/v1/ingest/sensor-data', sensorData);
+};
+
+export const getSensorData = async (deviceId: string): Promise<SensorDataResponse> => {
+  return api.get(`/api/v1/sensor-data?deviceId=${deviceId}`);
+};
+
+// Camera API
+export const streamCameraFrame = async (
+  frameData: ArrayBuffer,
+  headers: CameraFrameHeaders
+) => {
+  return api.post('/api/v1/stream/stream', frameData, {
+    headers: {
+      ...headers,
+      'Content-Type': 'application/octet-stream'
+    }
+  });
+};
 
 export default api;

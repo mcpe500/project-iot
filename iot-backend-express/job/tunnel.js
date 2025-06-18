@@ -104,10 +104,22 @@ exports.createSshTunnel = function createSshTunnel(
         conn.forwardIn('0.0.0.0', publicPort, (err, remotePort) => {
             if (err) {
                 console.error(`[Error] Failed to start remote listener on port ${publicPort}:`, err);
+                
+                // Check if the error is due to port already in use
+                if (err.message && (err.message.includes('bind') || err.message.includes('Unable to bind'))) {
+                    console.error(`[Fatal] Port ${publicPort} is already in use on the remote server. Please change PUBLIC_PORT in .env to a different port.`);
+                    console.error(`[Info] SSH tunnel setup aborted. No retry attempts will be made.`);
+                    conn.removeAllListeners('error');
+                    conn.removeAllListeners('close');
+                    conn.end(); // Close connection if forwarding fails
+                    return;
+                }
+                
                 conn.end(); // Close connection if forwarding fails
                 return;
             }
             console.log(`[Success] Remote server listening on port ${remotePort} (requested ${publicPort})`);
+            console.log(`[Info] Your application is now accessible at: http://${publicVpsIp}:${remotePort}`);
 
             // --- Handle Incoming Connections from the Tunnel ---
             conn.on('tcp connection', (info, accept, reject) => {
@@ -154,7 +166,16 @@ exports.createSshTunnel = function createSshTunnel(
 
     conn.on('error', (err) => {
         console.error(`[Error] SSH connection error: ${err.message}`);
-        // Optional: Implement retry logic here
+        
+        // Don't retry on authentication failures or certain critical errors
+        if (err.message.includes('Authentication') || 
+            err.message.includes('ENOTFOUND') || 
+            err.message.includes('ECONNREFUSED')) {
+            console.error('[Fatal] Critical SSH error. No retry attempts will be made.');
+            return;
+        }
+        
+        // Optional: Implement retry logic here for recoverable errors
         console.log('[Info] Attempting to reconnect in 10 seconds...');
         retryTimeout = setTimeout(connect, 10000); // Retry after 10 seconds
     });

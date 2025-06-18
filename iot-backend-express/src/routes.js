@@ -7,7 +7,8 @@ const path = require('path');
 const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
-const { dataDir, recordingsDir } = require('./dataStore'); // dataStore instance is passed in setupRoutes
+const { dataDir, recordingsDir } = require('./dataStore');
+// Database is accessed through dataStore now
 
 // Multer configurations
 const permittedFaceUpload = multer({ storage: multer.memoryStorage() });
@@ -15,12 +16,32 @@ const streamMultipartUpload = multer({ storage: multer.memoryStorage() }).single
 
 function setupRoutes(app, dataStore, wss) {
   // Health check
-  app.get('/health', (req, res) => {
-    res.json({ 
-      status: 'healthy', 
-      uptime: process.uptime(), 
-      timestamp: Date.now() 
-    });
+  app.get('/health', async (req, res) => {
+    try {
+      // Access database through dataStore
+      await dataStore.dbReady; // Wait for database to be ready
+      const sequelize = dataStore.sequelize;
+      
+      const dbStatus = await sequelize.verifyConnection();
+      
+      res.json({
+        status: dbStatus.success ? 'healthy' : 'degraded',
+        uptime: process.uptime(),
+        timestamp: Date.now(),
+        backendVersion: require('../../package.json').version,
+        nodeVersion: process.version,
+        database: {
+          status: dbStatus.success ? 'connected' : 'disconnected',
+          version: dbStatus.version,
+          message: dbStatus.message
+        }
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'unhealthy',
+        error: error.message
+      });
+    }
   });
 
   // Device registration

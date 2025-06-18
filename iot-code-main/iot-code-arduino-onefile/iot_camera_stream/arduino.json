@@ -1,0 +1,17 @@
+{
+    "sketch": "iot_camera_stream.ino",
+    "board": "esp32:esp32:esp32s3",
+    "configuration": {
+        "UploadSpeed": "921600",
+        "FlashSize": "16MB",
+        "PartitionScheme": "huge_app"
+    },
+    "output": "../build",
+    "programmer": "esptool",
+    "libraries": [
+        "WiFi",
+        "HTTPClient",
+        "ArduinoJson",
+        "esp_camera"
+    ]
+}

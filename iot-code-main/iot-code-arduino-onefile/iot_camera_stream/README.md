@@ -91,7 +91,7 @@ const char* WIFI_PASSWORD = "Your_WiFi_Password";
 
 ### Server Configuration
 ```cpp
-const char* SERVER_URL = "http://your-server.com:9005/api/v1/stream/stream";
+const char* SERVER_URL = "http://your-server.com:9004/api/v1/stream/stream";
 const char* API_KEY = "your-api-key-here";
 ```
 
