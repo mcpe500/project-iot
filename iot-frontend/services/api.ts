@@ -118,7 +118,7 @@ export const registerDevice = async (deviceData: DeviceRegistration) => {
   return api.post('/api/v1/devices/register', deviceData);
 };
 
-export const getDevices = async (): Promise<{ devices: DeviceInfo[] }> => {
+export const getDevices = async (): Promise<{ data: { devices: any[] } }> => {
   return api.get('/api/v1/devices');
 };
 
@@ -127,8 +127,8 @@ export const ingestSensorData = async (sensorData: SensorData) => {
   return api.post('/api/v1/ingest/sensor-data', sensorData);
 };
 
-export const getSensorData = async (deviceId: string): Promise<SensorDataResponse> => {
-  return api.get(`/api/v1/sensor-data?deviceId=${deviceId}`);
+export const getSensorData = async (deviceId: string): Promise<{ data: any[] }> => {
+  return api.get(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}`);
 };
 
 // Camera API

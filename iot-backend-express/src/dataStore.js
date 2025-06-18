@@ -123,7 +123,44 @@ class DataStore {
   // --- SENSOR DATA OPERATIONS (DATABASE) ---
   async saveSensorData(data) {
     await this.dbReady; // Ensure database is ready
-    
+
+    // Upsert device before saving sensor data
+    const deviceId = data.deviceId;
+    if (deviceId) {
+      // Try to find the device
+      let device = await this.Device.findOne({ where: { id: deviceId } });
+      if (!device) {
+        // Insert new device with minimal/default info
+        await this.Device.create({
+          id: deviceId,
+          name: data.deviceName || deviceId,
+          type: data.deviceType || 'sensor',
+          ipAddress: data.ipAddress || '',
+          status: 'online',
+          lastSeen: Date.now(),
+          capabilities: []
+        });
+        console.log(`🆕 Auto-registered new device from sensor data: ${deviceId}`);
+      } else {
+        // Update lastSeen and status
+        // Get previous sensor data to calculate uptime
+        const previousData = await this.SensorData.findOne({
+          where: { deviceId },
+          order: [['timestamp', 'DESC']]
+        });
+        
+        // Calculate uptime in seconds
+        const uptimeSeconds = previousData ?
+          (data.timestamp - previousData.timestamp) / 1000 : 0;
+          
+        await this.Device.update({
+          lastSeen: Date.now(),
+          status: 'online',
+          uptime: uptimeSeconds
+        }, { where: { id: deviceId } });
+      }
+    }
+
     const payload = {
       deviceId: data.deviceId,
       timestamp: data.timestamp || Date.now(),
@@ -136,13 +173,10 @@ class DataStore {
       co2Level: data.co2Level,
       customData: data.customData
     };
-    
     // Save sensor data
     const sensorRecord = await this.SensorData.create(payload);
-    
-    // Update device's lastSeen timestamp
+    // Update device's lastSeen timestamp (again, in case of race)
     await this.updateDevice(data.deviceId, {});
-    
     console.log(`💾 Saved sensor data for device: ${data.deviceId}`);
     return sensorRecord;
   }
@@ -152,12 +186,7 @@ class DataStore {
     return await this.SensorData.findAll({
       where: { deviceId },
       order: [['timestamp', 'DESC']],
-      limit,
-      include: [{
-        model: this.Device,
-        as: 'device',
-        attributes: ['name', 'type']
-      }]
+      limit
     });
   }
 

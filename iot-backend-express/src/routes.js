@@ -458,6 +458,23 @@ function setupRoutes(app, dataStore, wss) {
     }
   });
 
+  // Get sensor data for a device
+  app.get('/api/v1/sensor-data', async (req, res) => {
+    const { deviceId, limit } = req.query;
+    console.log('[API] /sensor-data query:', { deviceId, limit });
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Missing required query parameter: deviceId' });
+    }
+    try {
+      // Default to 100 records if not specified
+      const data = await dataStore.getSensorData(deviceId, limit ? parseInt(limit, 10) : 100);
+      res.json({ success: true, data });
+    } catch (error) {
+      console.error('[API Error] /sensor-data:', error);
+      res.status(500).json({ error: 'Failed to retrieve sensor data', details: error.message });
+    }
+  });
+
   // Serve static files for frames and recordings
   app.use('/data', express.static(dataDir));
   app.use('/recordings', express.static(recordingsDir));

@@ -39,7 +39,7 @@ const Config defaultConfig = {
   "BIZNET357",           // WIFI_SSID
   "ivan4321",       // WIFI_PASSWORD  
   "203.175.11.145",           // SERVER_IP
-  9004,                      // SERVER_PORT
+  9003,                      // SERVER_PORT
   "esp32-multi-sensor-1",    // DEVICE_ID
   "Lab Sensor Unit",         // DEVICE_NAME
   "DHT11-LDR-HCSR04"        // DEVICE_TYPE
@@ -67,7 +67,7 @@ DHT dht(DHT_PIN, DHT_TYPE);  // Initialize DHT sensor
 
 // Timing for backend communication
 unsigned long lastSendMillis = 0;
-const unsigned long sendInterval = 15000;   // Send data every 15 seconds
+const unsigned long sendInterval = 250;   // Send data every 250 miliseconds
 bool deviceRegistered = false;
 
 // Buzzer enable/disable flag (set to false to mute buzzer)
@@ -298,15 +298,20 @@ void checkForConfigUpdate() {
 
 // --- Sensor Functions ---
 void readSensors() {
-  // Read and print distance
+  // Read and print distance with timestamp
   distance = readDistanceSensor(); // Assign to global variable
-  Serial.print("Distance: ");
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.print("] Distance: ");
   Serial.print(distance);
   Serial.println(" cm");
   
-  // Read and print temperature and humidity
+  // Read and print temperature and humidity with timestamp
   temperature = dht.readTemperature(); // Assign to global variable
   humidity = dht.readHumidity();    // Assign to global variable
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.print("] ");
   
   if (!isnan(temperature)) {
     Serial.print("Temperature: ");
@@ -320,9 +325,11 @@ void readSensors() {
     Serial.println(" %");
   }
   
-  // Read and print light level
+  // Read and print light level with timestamp
   lightLevel = analogRead(LDR_PIN); // Assign to global variable
-  Serial.print("Light Level: ");
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.print("] Light Level: ");
   Serial.println(lightLevel);
 }
 
@@ -411,7 +418,10 @@ void sendSensorData() {
 
   String jsonPayload;
   serializeJson(doc, jsonPayload);
-  Serial.println("Sending payload: " + jsonPayload);
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.print("] Sending payload: ");
+  Serial.println(jsonPayload);
 
   // Send HTTP POST request
   HTTPClient http;
@@ -421,9 +431,24 @@ void sendSensorData() {
 
   int httpResponseCode = http.POST(jsonPayload);
   if (httpResponseCode > 0) {
-    Serial.printf("Sensor data sent. HTTP Response: %d\n", httpResponseCode);
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print("] Sensor data sent. HTTP Response: ");
+    Serial.println(httpResponseCode);
+    
+    // Log response payload if available
+    String responsePayload = http.getString();
+    if (responsePayload.length() > 0) {
+      Serial.print("[");
+      Serial.print(millis());
+      Serial.print("] Server response: ");
+      Serial.println(responsePayload);
+    }
   } else {
-    Serial.printf("Error sending sensor data. Code: %s\n", http.errorToString(httpResponseCode).c_str());
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print("] Error sending sensor data. Code: ");
+    Serial.println(http.errorToString(httpResponseCode).c_str());
   }
   http.end();
 }

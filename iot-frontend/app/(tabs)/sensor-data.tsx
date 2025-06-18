@@ -3,9 +3,10 @@ import { View, ScrollView, StyleSheet, Text, ActivityIndicator } from 'react-nat
 import { LineChart } from 'react-native-chart-kit';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import { getSensorData } from '@/services/api';
+import { getSensorData, getDevices } from '@/services/api';
 import { Dimensions } from 'react-native';
 import { CONFIG } from '@/app/config';
+import { Picker } from '@react-native-picker/picker';
 
 // Define sensor data type
 interface SensorDataItem {
@@ -26,27 +27,89 @@ interface SensorUpdateMessage {
   lightLevel: number;
 }
 
+// Add device type
+interface DeviceItem {
+  deviceId: string;
+  deviceName: string;
+  deviceType: string;
+}
+
+interface ApiResponse {
+  data: SensorDataItem[] | { data: SensorDataItem[] };
+}
+
 const SensorDataPage = () => {
   const [sensorData, setSensorData] = useState<SensorDataItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState('1h');
-  const [selectedDevice, setSelectedDevice] = useState('esp32-sensor-1');
-  
-  // Fetch initial sensor data
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>('');
+
+  // Fetch device list on mount
   useEffect(() => {
+    const fetchDevices = async () => {
+      try {
+        const response = await getDevices();
+        const deviceList = response.data?.devices || [];
+        setDevices(deviceList);
+        if (deviceList.length > 0 && !selectedDevice) {
+          setSelectedDevice(deviceList[0].deviceId);
+        }
+      } catch (error) {
+        console.error('Error fetching devices:', error);
+      }
+    };
+    fetchDevices();
+  }, []);
+
+  // Fetch and update sensor data periodically
+  useEffect(() => {
+    if (!selectedDevice) return;
+    
+    let isMounted = true;
+    const fetchInterval = setInterval(async () => {
+      try {
+        const response = await getSensorData(selectedDevice);
+        if (isMounted) {
+          // Handle API response structure
+          const data = Array.isArray(response.data) ?
+            response.data :
+            (Array.isArray((response.data as any)?.data) ?
+              (response.data as any).data : []);
+          setSensorData(data);
+        }
+      } catch (error) {
+        console.error('Error fetching sensor data:', error);
+      }
+    }, 1000); // Update every second
+    
+    // Initial fetch
     const fetchData = async () => {
       try {
         setLoading(true);
         const response = await getSensorData(selectedDevice);
-        setSensorData(response.data || []);
+        if (isMounted) {
+          // Handle API response structure
+          const data = Array.isArray(response.data) ?
+            response.data :
+            (Array.isArray((response.data as any)?.data) ?
+              (response.data as any).data : []);
+          setSensorData(data);
+        }
       } catch (error) {
         console.error('Error fetching sensor data:', error);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
-    
     fetchData();
+    
+    return () => {
+      isMounted = false;
+      clearInterval(fetchInterval);
+    };
   }, [selectedDevice, timeRange]);
 
   // Set up WebSocket for real-time updates
@@ -210,7 +273,16 @@ const SensorDataPage = () => {
       <View style={styles.header}>
         <ThemedText type="title">Sensor Dashboard</ThemedText>
         <View style={styles.controls}>
-          {/* Device selector and time range will be implemented later */}
+          {/* Device selector */}
+          <Picker
+            selectedValue={selectedDevice}
+            style={{ height: 40, width: 220, color: '#333', backgroundColor: '#fff', borderRadius: 8 }}
+            onValueChange={(itemValue) => setSelectedDevice(itemValue)}
+          >
+            {devices.map((device) => (
+              <Picker.Item key={device.deviceId} label={device.deviceName || device.deviceId} value={device.deviceId} />
+            ))}
+          </Picker>
         </View>
       </View>
       
@@ -256,7 +328,8 @@ const SensorDataPage = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 15,
+    padding: 20,
+    backgroundColor: '#f5f5f5',
   },
   header: {
     marginBottom: 20,
@@ -265,17 +338,20 @@ const styles = StyleSheet.create({
   controls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 10,
+    marginTop: 15,
+    color: '#666',
   },
   card: {
-    borderRadius: 12,
-    padding: 15,
+    borderRadius: 16,
+    padding: 30,
+    backgroundColor: '#f5f5f5',
     marginBottom: 20,
-    elevation: 2,
+    // Removed duplicate backgroundColor
+    elevation: 4,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 8,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -284,12 +360,13 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   valueText: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
+    color: '#333',
   },
   chart: {
-    borderRadius: 8,
-    marginVertical: 10,
+    borderRadius: 12,
+    marginVertical: 15,
   },
   statsRow: {
     flexDirection: 'row',
@@ -297,14 +374,17 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   statText: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
+    fontWeight: '500',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    // Removed duplicate backgroundColor
+    padding: 30,
+    backgroundColor: '#f5f5f5',
   },
   loadingText: {
     marginTop: 10,
@@ -321,8 +401,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noDataText: {
-    color: '#999',
+    color: '#666',
     fontStyle: 'italic',
+    fontSize: 14,
   },
 });
 
