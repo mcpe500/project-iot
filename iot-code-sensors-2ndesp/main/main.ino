@@ -67,7 +67,7 @@ DHT dht(DHT_PIN, DHT_TYPE);  // Initialize DHT sensor
 
 // Timing for backend communication
 unsigned long lastSendMillis = 0;
-const unsigned long sendInterval = 250;   // Send data every 250 miliseconds
+const unsigned long sendInterval = 1000;   // Send data every 250 miliseconds
 bool deviceRegistered = false;
 
 // Buzzer enable/disable flag (set to false to mute buzzer)

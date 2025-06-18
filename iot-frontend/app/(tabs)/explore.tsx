@@ -17,7 +17,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { IconSymbol } from '@/components/IconSymbol';
 import { CONFIG } from '@/config';
-import { Video, ResizeMode } from 'expo-av';
+import { VideoView, useVideoPlayer, VideoContentFit } from 'expo-video';
 
 interface MediaItem {
   id: string;
@@ -39,7 +39,37 @@ export default function ExploreScreen() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('videos');
   const [isVideoPlayerVisible, setIsVideoPlayerVisible] = useState(false);
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
-  const videoRef = React.useRef<Video>(null);
+
+  // Always call useVideoPlayer at the top level
+  const player = useVideoPlayer(
+    selectedVideoUrl ? { uri: selectedVideoUrl } : { uri: '' },
+    player => { if (selectedVideoUrl) player.play(); }
+  );
+
+  // --- Video Player Modal Logic ---
+  const renderVideoModal = () => {
+    if (!selectedVideoUrl) return null;
+    return (
+      <Modal
+        animationType="slide"
+        visible={isVideoPlayerVisible}
+        supportedOrientations={['portrait', 'landscape']}
+        onRequestClose={() => setIsVideoPlayerVisible(false)}
+      >
+        <View style={styles.videoModalContainer}>
+          <VideoView
+            player={player}
+            style={styles.videoPlayer}
+            contentFit="contain"
+            nativeControls
+          />
+          <TouchableOpacity style={styles.closeButton} onPress={() => setIsVideoPlayerVisible(false)}>
+            <Text style={styles.closeButtonText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+    );
+  };
 
   const loadMedia = useCallback(async (tab: ActiveTab, isInitialLoad = false) => {
     if (isInitialLoad) setLoading(true);
@@ -197,27 +227,7 @@ export default function ExploreScreen() {
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1a1a1a" />
-      {selectedVideoUrl && (
-        <Modal
-          animationType="slide"
-          visible={isVideoPlayerVisible}
-          supportedOrientations={['portrait', 'landscape']}
-          onRequestClose={() => setIsVideoPlayerVisible(false)}
-        >
-          <View style={styles.videoModalContainer}>
-            <Video
-              ref={videoRef}
-              style={styles.videoPlayer}
-              source={{ uri: selectedVideoUrl }}
-              useNativeControls
-              resizeMode={ResizeMode.CONTAIN}
-            />
-            <TouchableOpacity style={styles.closeButton} onPress={() => setIsVideoPlayerVisible(false)}>
-              <Text style={styles.closeButtonText}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </Modal>
-      )}
+      {renderVideoModal()}
 
       <View style={styles.header}>
         <ThemedText style={styles.title}>Media Library</ThemedText>

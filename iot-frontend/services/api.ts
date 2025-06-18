@@ -128,7 +128,7 @@ export const ingestSensorData = async (sensorData: SensorData) => {
 };
 
 export const getSensorData = async (deviceId: string): Promise<{ data: any[] }> => {
-  return api.get(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}`);
+  return api.get(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}&limit=100`);
 };
 
 // Camera API
