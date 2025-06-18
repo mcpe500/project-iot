@@ -3,9 +3,9 @@
 
 export const ENV_CONFIG = {
   // Development environment (default)
-  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9005',
+  BACKEND_URL: process.env.EXPO_PUBLIC_BACKEND_URL || 'http://203.175.11.145:9004',
   // Ensure WS_URL does NOT have a trailing slash here; it will be handled by getWebSocketUrl
-  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9005',
+  WS_URL: process.env.EXPO_PUBLIC_WS_URL || 'ws://203.175.11.145:9004',
   API_KEY: process.env.EXPO_PUBLIC_API_KEY || 'dev-api-key-change-in-production',
   
   // Network configuration

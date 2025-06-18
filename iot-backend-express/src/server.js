@@ -10,6 +10,7 @@ const { createSshTunnel } = require('../job/tunnel');
 // Import our separated modules
 const { DataStore } = require('./dataStore');
 const setupRoutes = require('./routes');
+const { initializeDatabase } = require('./database');
 
 // Load environment variables
 dotenv.config();
@@ -34,12 +35,12 @@ app.use('/api/', apiLimiter);
 // Initialize data store
 const dataStore = new DataStore();
 
-// WebSocket server
+// WebSocket server (moved before async block)
 const wss = new WebSocket.Server({ noServer: true });
 
 wss.on('connection', (ws) => {
   ws.on('message', (message) => {
-    console.log('Received WebSocket message:', message.toString());
+    console.log('📨 Received WebSocket message:', message.toString());
   });
 
   ws.send(JSON.stringify({
@@ -49,27 +50,61 @@ wss.on('connection', (ws) => {
   }));
 });
 
-// Setup routes with dependencies
-setupRoutes(app, dataStore, wss);
+// Initialize and start server
+let server; // Declare server variable in module scope
 
-// Start server
-const server = app.listen(port, () => {
-  console.log(`IoT Backend running on port ${port}`);
-});
-
-// Handle WebSocket upgrades
-server.on('upgrade', (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit('connection', ws, request);
-  });
-});
-
-// SSH tunnel setup if configured
-if (process.env.PUBLIC_VPS_IP) {
-  const sshClient = createSshTunnel();
-  if (sshClient) {
-    console.log('SSH tunnel established');
+(async () => {  try {
+    // Initialize database first
+    const sequelize = await initializeDatabase();
+    const dbStatus = await sequelize.verifyConnection();
+    
+    if (!dbStatus.success) {
+      console.error('❌ Fatal: Database connection failed. Exiting...');
+      process.exit(1);
+    }
+    
+    console.log('✅ Database verified, starting server...');
+    
+    // Setup routes with dependencies after database is ready
+    setupRoutes(app, dataStore, wss);
+    
+    // Start server after database is ready
+    server = app.listen(port, () => {
+      console.log(`🚀 IoT Backend running on port ${port}`);
+      console.log(`📊 Database: ${dbStatus.version}`);
+    });
+    
+    // Handle WebSocket upgrades
+    server.on('upgrade', (request, socket, head) => {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+      });
+    });
+      // SSH tunnel setup if configured
+    if (process.env.PUBLIC_VPS_IP) {
+      try {
+        console.log(`🔗 Setting up SSH tunnel to ${process.env.PUBLIC_VPS_IP}:${process.env.PUBLIC_PORT}...`);
+        const sshClient = createSshTunnel();
+        if (sshClient) {
+          console.log(`✅ SSH tunnel setup initiated. External access: http://${process.env.PUBLIC_VPS_IP}:${process.env.PUBLIC_PORT}`);
+        } else {
+          console.warn('⚠️  SSH tunnel setup failed, but server will continue running locally.');
+        }
+      } catch (tunnelErr) {
+        console.error('⚠️  SSH tunnel error (server continues locally):', tunnelErr.message);
+      }
+    } else {
+      console.log('ℹ️  SSH tunnel disabled - no PUBLIC_VPS_IP configured');
+    }
+    
+  } catch (err) {
+    console.error('❌ Fatal error during startup:', err);
+    process.exit(1);
   }
-}
+})();
 
-module.exports = server;
+// Export app for testing and server getter
+module.exports = { 
+  app,
+  getServer: () => server 
+};

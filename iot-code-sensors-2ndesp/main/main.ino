@@ -36,10 +36,10 @@ Config config;
 
 // Default configuration values (matching .env.example)
 const Config defaultConfig = {
-  "your_wifi_ssid",           // WIFI_SSID
-  "your_wifi_password",       // WIFI_PASSWORD  
-  "192.168.1.100",           // SERVER_IP
-  3001,                      // SERVER_PORT
+  "BIZNET357",           // WIFI_SSID
+  "ivan4321",       // WIFI_PASSWORD  
+  "203.175.11.145",           // SERVER_IP
+  9004,                      // SERVER_PORT
   "esp32-multi-sensor-1",    // DEVICE_ID
   "Lab Sensor Unit",         // DEVICE_NAME
   "DHT11-LDR-HCSR04"        // DEVICE_TYPE

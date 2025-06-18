@@ -3,8 +3,8 @@
 
 export const CONFIG = {
   // Backend server configuration
-  BACKEND_URL: 'http://203.175.11.145:9005',
-  WS_URL: 'ws://203.175.11.145:9005/', // Ensure trailing slash for WebSocket URL
+  BACKEND_URL: 'http://203.175.11.145:9004',
+  WS_URL: 'ws://203.175.11.145:9004/', // Ensure trailing slash for WebSocket URL
   API_KEY: 'dev-api-key-change-in-production', // Same key as Arduino
   
   // Camera configuration

@@ -30,9 +30,9 @@ static const char *TAG = "HD_CAMERA";
 // ===========================
 #define WIFI_SSID "SSID"
 #define WIFI_PASS "PASSWD"
-#define SERVER_URL "http://203.175.11.145:9005/api/v1/stream/stream"
-#define REGISTER_URL "http://203.175.11.145:9005/api/v1/devices/register"
-#define HEARTBEAT_URL "http://203.175.11.145:9005/api/v1/devices/heartbeat"
+#define SERVER_URL "http://203.175.11.145:9004/api/v1/stream/stream"
+#define REGISTER_URL "http://203.175.11.145:9004/api/v1/devices/register"
+#define HEARTBEAT_URL "http://203.175.11.145:9004/api/v1/devices/heartbeat"
 #define API_KEY "dev-api-key-change-in-production"
 #define DEVICE_ID "ESP32-CAM-001-IDF"
 #define DEVICE_NAME "Camera #1 - IDF HD Optimized"
