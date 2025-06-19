@@ -1,7 +1,24 @@
-import axios from 'axios';
+import axios, { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { CONFIG } from '@/config';
 
-// Type definitions
+// Extend InternalAxiosRequestConfig to include required metadata
+interface ExtendedAxiosRequestConfig extends InternalAxiosRequestConfig {
+  metadata: {
+    retryCount: number;
+    responseTime?: number;
+  };
+}
+
+// Exponential backoff configuration
+const RETRY_CONFIG = {
+  maxRetries: 5,
+  initialDelay: 1000, // 1 second
+  maxDelay: 30000, // 30 seconds
+  retryStatusCodes: [408, 429, 500, 502, 503, 504],
+  retryNetworkErrors: true
+};
+
+// Enhanced type definitions
 interface DeviceRegistration {
   id: string;
   name: string;
@@ -49,6 +66,21 @@ interface BuzzerStatus {
   lastUpdated: number;
 }
 
+// Exponential backoff retry function
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const shouldRetry = (error: AxiosError) => {
+  return RETRY_CONFIG.retryStatusCodes.includes(error.response?.status || 0) ||
+    (RETRY_CONFIG.retryNetworkErrors && !error.response);
+};
+
+const calculateRetryDelay = (retryCount: number) => {
+  return Math.min(
+    RETRY_CONFIG.initialDelay * Math.pow(2, retryCount),
+    RETRY_CONFIG.maxDelay
+  );
+};
+
 // Create axios instance with default configuration
 const api = axios.create({
   baseURL: CONFIG.BACKEND_URL,
@@ -59,68 +91,119 @@ const api = axios.create({
   }
 });
 
-// Add request interceptor to ensure API key is always included
+// Enhanced request interceptor
 api.interceptors.request.use(
-  (config) => {
-    config.headers['X-API-Key'] = CONFIG.API_KEY;
+  (config: InternalAxiosRequestConfig) => {
+    // Type cast to ExtendedAxiosRequestConfig and initialize metadata
+    const extendedConfig = config as ExtendedAxiosRequestConfig;
+    extendedConfig.metadata = extendedConfig.metadata || { retryCount: 0 };
+    
+    // Ensure headers exist with the correct type
+    extendedConfig.headers = extendedConfig.headers || {};
+
+    // Add content-length header for non-empty payloads
+    if (extendedConfig.data) {
+      extendedConfig.headers['Content-Length'] = JSON.stringify(extendedConfig.data).length;
+    }
+
     console.log('🔐 API Request:', {
-      method: config.method?.toUpperCase(),
-      url: config.url,
-      baseURL: config.baseURL,
-      fullURL: `${config.baseURL}${config.url}`,
-      headers: {
-        'X-API-Key': config.headers['X-API-Key'],
-        'Content-Type': config.headers['Content-Type']
-      },
-      timeout: config.timeout
+      method: extendedConfig.method?.toUpperCase(),
+      url: extendedConfig.url,
+      baseURL: extendedConfig.baseURL,
+      fullURL: `${extendedConfig.baseURL}${extendedConfig.url}`,
+      headers: extendedConfig.headers,
+      timeout: extendedConfig.timeout,
+      payloadSize: extendedConfig.data ? JSON.stringify(extendedConfig.data).length : 0
     });
-    return config;
+
+    return extendedConfig;
   },
   (error) => {
-    console.error('❌ API Request Setup Error:', error);
+    console.error('❌ API Request Setup Error:', {
+      message: error.message,
+      config: error.config,
+      stack: error.stack
+    });
     return Promise.reject(error);
   }
 );
 
-// Add response interceptor for error handling
+// Enhanced response interceptor with retry logic
 api.interceptors.response.use(
-  (response) => {
+  (response: AxiosResponse) => {
+    const extendedConfig = response.config as ExtendedAxiosRequestConfig;
+    
+    // Verify response content
+    if (!response.headers['content-length']) {
+      console.warn('⚠️ Missing Content-Length header in response');
+    }
+
     console.log('✅ API Response Success:', {
       status: response.status,
       statusText: response.statusText,
-      url: response.config.url,
+      url: extendedConfig.url,
       dataType: typeof response.data,
-      dataSize: JSON.stringify(response.data).length
+      dataSize: response.headers['content-length'] || 'unknown',
+      responseTime: extendedConfig.metadata?.responseTime || 'unknown'
     });
+
     return response;
   },
-  (error) => {
+  async (error: AxiosError) => {
+    const config = error.config as ExtendedAxiosRequestConfig;
+    
+    // Initialize retry count if not present
+    config.metadata = config.metadata || { retryCount: 0 };
+    
+    if (shouldRetry(error) && config.metadata.retryCount < RETRY_CONFIG.maxRetries) {
+      const retryCount = config.metadata.retryCount + 1;
+      const delayTime = calculateRetryDelay(retryCount);
+      
+      console.warn(`🔄 Retrying request (attempt ${retryCount}/${RETRY_CONFIG.maxRetries})`, {
+        url: config.url,
+        delay: delayTime,
+        error: error.message,
+        status: error.response?.status
+      });
+
+      // Update retry count and add delay
+      config.metadata.retryCount = retryCount;
+      await delay(delayTime);
+      
+      return api(config);
+    }
+
     console.error('❌ API Response Error:', {
       status: error.response?.status,
       statusText: error.response?.statusText,
-      url: error.config?.url,
+      url: config.url,
       message: error.message,
-      data: error.response?.data
+      data: error.response?.data,
+      retryAttempts: config.metadata.retryCount
     });
-    
+
     if (error.response?.status === 401) {
       console.error('🚫 Authentication failed details:', {
         expectedApiKey: CONFIG.API_KEY,
-        sentApiKey: error.config?.headers?.['X-API-Key'],
+        sentApiKey: config.headers?.['X-API-Key'],
         backendUrl: CONFIG.BACKEND_URL
       });
     }
-    
+
     if (error.code === 'NETWORK_ERROR' || error.message.includes('Network Error')) {
       console.error('🌐 Network connectivity issue - check if backend is running');
     }
-    
+
     return Promise.reject(error);
   }
 );
 
-// Device Management API
+// Enhanced API methods with content validation
 export const registerDevice = async (deviceData: DeviceRegistration) => {
+  // Validate device data
+  if (!deviceData.id || !deviceData.name || !deviceData.type) {
+    throw new Error('Invalid device data: missing required fields');
+  }
   return api.post('/api/v1/devices/register', deviceData);
 };
 
@@ -128,34 +211,48 @@ export const getDevices = async (): Promise<{ data: { devices: any[] } }> => {
   return api.get('/api/v1/devices');
 };
 
-// Sensor Data API
 export const ingestSensorData = async (sensorData: SensorData) => {
+  // Validate sensor data
+  if (!sensorData.deviceId || !sensorData.timestamp) {
+    throw new Error('Invalid sensor data: missing required fields');
+  }
   return api.post('/api/v1/ingest/sensor-data', sensorData);
 };
 
 export const getSensorData = async (deviceId: string): Promise<{ data: any[] }> => {
+  if (!deviceId) {
+    throw new Error('Device ID is required');
+  }
   return api.get(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}&limit=100`);
 };
 
-// Camera API
 export const streamCameraFrame = async (
   frameData: ArrayBuffer,
   headers: CameraFrameHeaders
 ) => {
+  if (!frameData || !headers['X-Device-ID']) {
+    throw new Error('Invalid frame data or headers');
+  }
   return api.post('/api/v1/stream/stream', frameData, {
     headers: {
       ...headers,
-      'Content-Type': 'application/octet-stream'
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': frameData.byteLength
     }
   });
 };
 
-// Buzzer Control API
 export const requestBuzzer = async (deviceId: string, status: boolean): Promise<BuzzerStatus> => {
+  if (!deviceId) {
+    throw new Error('Device ID is required');
+  }
   return api.post('/api/v1/buzzer/control', { deviceId, status });
 };
 
 export const getBuzzerStatus = async (deviceId: string): Promise<BuzzerStatus> => {
+  if (!deviceId) {
+    throw new Error('Device ID is required');
+  }
   return api.get(`/api/v1/buzzer/status?deviceId=${encodeURIComponent(deviceId)}`);
 };
 

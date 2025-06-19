@@ -22,7 +22,7 @@ DEBUG=True
 
 # SSH Reverse Tunnel (Optional)
 PUBLIC_VPS_IP=your.vps.ip.address
-PUBLIC_PORT=9003
+PUBLIC_PORT=9004
 PRIVATE_SERVER_PORT=9001
 SSH_USER=your-ssh-username
 SSH_PASSWORD=your-ssh-password
@@ -122,7 +122,7 @@ GET /api/v1/stream/frames
 The service automatically establishes an SSH reverse tunnel when configured, allowing remote access through a public VPS:
 
 1. **Configure SSH settings** in `.env` file
-2. **Public VPS** listens on specified port (default: 9003)
+2. **Public VPS** listens on specified port (default: 9004)
 3. **Traffic forwarded** to local service (default: 9001)
 4. **Auto-reconnect** handles connection failures
 
