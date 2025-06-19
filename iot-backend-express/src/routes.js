@@ -629,7 +629,7 @@ function setupRoutes(app, dataStore, wss) {
   });
 
   // --- OPTIMIZED SENSOR DATA ENDPOINTS ---
-  // High-performance sensor data ingestion with batching
+  // Sensor data ingestion with explicit database queries
   app.post('/api/v1/ingest/sensor-data', async (req, res) => {
     const startTime = Date.now();
     const sensorData = req.body;
@@ -653,7 +653,7 @@ function setupRoutes(app, dataStore, wss) {
         altitude: sensorData.altitude,
         co2Level: sensorData.co2Level,
         customData: sensorData.customData
-      });
+      }, wss);
 
       // Real-time WebSocket notification
       const sensorMessage = {
@@ -679,7 +679,10 @@ function setupRoutes(app, dataStore, wss) {
       console.error('[API Error] /ingest/sensor-data:', error);
       res.status(500).json({
         error: 'Failed to save sensor data',
-        details: error.message,
+        details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+        validationErrors: {
+          deviceId: sensorData.deviceId ? 'Valid' : 'Missing or invalid'
+        },
         responseTime: Date.now() - startTime
       });
     }
@@ -701,19 +704,15 @@ function setupRoutes(app, dataStore, wss) {
       const limitNum = limit ? Math.min(parseInt(limit, 10), 1000) : 100; // Cap at 1000 for performance
       const data = await dataStore.getSensorData(deviceId, limitNum);
 
-      // Prepare response and set Content-Length header
-      const responseObj = {
+      // Disable caching and return fresh data
+      addNoCacheHeaders(res);
+      res.json({
         success: true,
         data,
         count: data.length,
         deviceId,
         responseTime: Date.now() - startTime
-      };
-      const responseStr = JSON.stringify(responseObj);
-      res.set('Content-Length', Buffer.byteLength(responseStr));
-      addCacheHeaders(res, 60); // Cache for 1 minute
-      console.log({ responseStr })
-      res.type('application/json').send(responseStr);
+      });
     } catch (error) {
       console.error('[API Error] /sensor-data:', error);
       res.status(500).json({

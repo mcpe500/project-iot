@@ -11,7 +11,7 @@ class DatabaseOptimizer {
     this.stats = {
       queriesExecuted: 0,
       batchedQueries: 0,
-      cacheHits: 0,
+      cacheHits: 0, // Disabled caching for sensor data
       optimizedQueries: 0,
       averageQueryTime: 0,
       totalQueryTime: 0

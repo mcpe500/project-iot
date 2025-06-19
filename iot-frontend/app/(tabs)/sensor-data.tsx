@@ -20,13 +20,11 @@ import { CONFIG } from '../../config';
 import { useColorScheme } from '../../hooks/useColorScheme';
 import { Colors } from '../../constants/Colors';
 
-// Interface definitions (keep these as they are)
-interface SensorDataItem {
-  timestamp: number;
-  temperature: number;
-  humidity: number;
-  distance: number;
-  lightLevel: number;
+import { SensorDataItem } from '../../types/sensor';
+
+// Interface definitions
+interface SensorDataResponse {
+  data: SensorDataItem[];
 }
 interface SensorUpdateMessage extends SensorDataItem {
   deviceId: string;
@@ -94,18 +92,12 @@ const SensorDataPage: React.FC = () => {
       try {
         const response = await getSensorData(selectedDevice);
         if (isMounted) {
-          // Handle API response structure
-          const data = Array.isArray(response.data) ?
-            response.data :
-            (Array.isArray((response.data as any)?.data) ?
-              (response.data as any).data : []);
-
-          setSensorData(data.sort((a: any, b: any) => a.timestamp - b.timestamp));
+          setSensorData(response.sort((a, b) => a.timestamp - b.timestamp));
         }
       } catch (error) {
         console.error('Error fetching sensor data:', error);
       }
-    }, 1000); // Update every second
+    }, 500); // Update every second
 
     // Initial fetch
     const fetchData = async () => {
@@ -113,12 +105,7 @@ const SensorDataPage: React.FC = () => {
         setLoading(true);
         const response = await getSensorData(selectedDevice);
         if (isMounted) {
-          // Handle API response structure
-          const data = Array.isArray(response.data) ?
-            response.data :
-            (Array.isArray((response.data as any)?.data) ?
-              (response.data as any).data : []);
-          setSensorData(data.sort((a: any, b: any) => a.timestamp - b.timestamp));
+          setSensorData(response.sort((a, b) => a.timestamp - b.timestamp));
         }
       } catch (error) {
         console.error('Error fetching sensor data:', error);
@@ -163,7 +150,7 @@ const SensorDataPage: React.FC = () => {
     if (sensorData.length === 0) return { current: 0, min: 0, max: 0 };
     const values = sensorData.map(item => item[metric]);
     return {
-      current: values[values.length - 1] || 0,
+      current: values[0] || 0,
       min: Math.min(...values),
       max: Math.max(...values),
     };
