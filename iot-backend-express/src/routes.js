@@ -366,14 +366,14 @@ function setupRoutes(app, dataStore, wss) {
   app.post('/api/v1/devices/register', async (req, res) => {
     const startTime = Date.now();
     const device = req.body;
-    
+
     if (!device.deviceId || !device.deviceName || !device.deviceType) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Missing required fields: deviceId, deviceName, deviceType',
         responseTime: Date.now() - startTime
       });
     }
-    
+
     try {
       const registeredDevice = await dataStore.registerDevice({
         id: device.deviceId,
@@ -383,14 +383,14 @@ function setupRoutes(app, dataStore, wss) {
         status: 'online',
         capabilities: device.capabilities || []
       });
-      
+
       // Real-time notification
       const deviceMessage = {
         type: 'device_registered',
         device: registeredDevice,
         timestamp: Date.now()
       };
-      
+
       wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(deviceMessage));
@@ -405,8 +405,8 @@ function setupRoutes(app, dataStore, wss) {
       });
     } catch (error) {
       console.error('[API Error] /devices/register:', error);
-      res.status(500).json({ 
-        error: 'Failed to register device', 
+      res.status(500).json({
+        error: 'Failed to register device',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -417,14 +417,14 @@ function setupRoutes(app, dataStore, wss) {
   app.post('/api/v1/devices/heartbeat', async (req, res) => {
     const startTime = Date.now();
     const { deviceId, uptime, freeHeap, wifiRssi, status } = req.body;
-    
+
     if (!deviceId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Device ID required',
         responseTime: Date.now() - startTime
       });
     }
-    
+
     try {
       const updatedDevice = await dataStore.updateDevice(deviceId, {
         uptime: uptime,
@@ -432,26 +432,26 @@ function setupRoutes(app, dataStore, wss) {
         wifiRssi: wifiRssi,
         status: status || 'online'
       });
-      
+
       if (updatedDevice) {
         addNoCacheHeaders(res);
-        res.json({ 
-          message: 'Heartbeat received', 
-          status: 'success', 
+        res.json({
+          message: 'Heartbeat received',
+          status: 'success',
           device: updatedDevice,
           responseTime: Date.now() - startTime
         });
       } else {
         console.warn(`Heartbeat from unknown device ${deviceId}, attempting to re-register.`);
-        res.status(404).json({ 
+        res.status(404).json({
           error: 'Device not found. Please re-register.',
           responseTime: Date.now() - startTime
         });
       }
     } catch (error) {
       console.error('[API Error] /devices/heartbeat:', error);
-      res.status(500).json({ 
-        error: 'Failed to process heartbeat', 
+      res.status(500).json({
+        error: 'Failed to process heartbeat',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -462,14 +462,14 @@ function setupRoutes(app, dataStore, wss) {
   app.post('/api/v1/buzzer/request', async (req, res) => {
     const startTime = Date.now();
     const { deviceId } = req.body;
-    
+
     if (!deviceId) {
       return res.status(400).json({ error: 'Device ID is required' });
     }
 
     try {
       const request = await dataStore.createBuzzerRequest(deviceId);
-      
+
       // Real-time notification
       const buzzerMessage = {
         type: 'buzzer_request',
@@ -477,7 +477,7 @@ function setupRoutes(app, dataStore, wss) {
         requestId: request.id || request.requestedAt,
         timestamp: request.requestedAt
       };
-      
+
       wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(buzzerMessage));
@@ -492,8 +492,8 @@ function setupRoutes(app, dataStore, wss) {
       });
     } catch (error) {
       console.error('[API Error] /buzzer/request:', error);
-      res.status(500).json({ 
-        error: 'Failed to create buzzer request', 
+      res.status(500).json({
+        error: 'Failed to create buzzer request',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -514,7 +514,7 @@ function setupRoutes(app, dataStore, wss) {
             dataStore.getBuzzerStatus(device.id)
           )
         );
-        
+
         addCacheHeaders(res, 60); // Cache for 1 minute
         return res.json({
           success: true,
@@ -524,7 +524,7 @@ function setupRoutes(app, dataStore, wss) {
       }
 
       const status = await dataStore.getBuzzerStatus(deviceId);
-      
+
       addCacheHeaders(res, 30); // Cache for 30 seconds
       res.json({
         success: true,
@@ -533,8 +533,8 @@ function setupRoutes(app, dataStore, wss) {
       });
     } catch (error) {
       console.error('[API Error] /buzzer/status:', error);
-      res.status(500).json({ 
-        error: 'Failed to get buzzer status', 
+      res.status(500).json({
+        error: 'Failed to get buzzer status',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -547,7 +547,7 @@ function setupRoutes(app, dataStore, wss) {
 
     try {
       const request = await dataStore.completeBuzzerRequest(id);
-      
+
       // Real-time notification
       if (request && request.deviceId) {
         const completionMessage = {
@@ -556,7 +556,7 @@ function setupRoutes(app, dataStore, wss) {
           requestId: id,
           timestamp: request.buzzedAt
         };
-        
+
         wss.clients.forEach(client => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(JSON.stringify(completionMessage));
@@ -572,8 +572,8 @@ function setupRoutes(app, dataStore, wss) {
       });
     } catch (error) {
       console.error('[API Error] /buzzer/complete:', error);
-      res.status(500).json({ 
-        error: 'Failed to complete buzzer request', 
+      res.status(500).json({
+        error: 'Failed to complete buzzer request',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -633,14 +633,14 @@ function setupRoutes(app, dataStore, wss) {
   app.post('/api/v1/ingest/sensor-data', async (req, res) => {
     const startTime = Date.now();
     const sensorData = req.body;
-    
+
     if (!sensorData.deviceId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Missing required field: deviceId',
         responseTime: Date.now() - startTime
       });
     }
-    
+
     try {
       const savedData = await dataStore.saveSensorData({
         deviceId: sensorData.deviceId,
@@ -654,31 +654,31 @@ function setupRoutes(app, dataStore, wss) {
         co2Level: sensorData.co2Level,
         customData: sensorData.customData
       });
-      
+
       // Real-time WebSocket notification
       const sensorMessage = {
         type: 'sensor-data',
         data: savedData,
         timestamp: savedData.timestamp
       };
-      
+
       wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify(sensorMessage));
         }
       });
-      
+
       addNoCacheHeaders(res);
-      res.json({ 
+      res.json({
         success: true,
-        message: 'Data received', 
+        message: 'Data received',
         data: savedData,
         responseTime: Date.now() - startTime
       });
     } catch (error) {
       console.error('[API Error] /ingest/sensor-data:', error);
-      res.status(500).json({ 
-        error: 'Failed to save sensor data', 
+      res.status(500).json({
+        error: 'Failed to save sensor data',
         details: error.message,
         responseTime: Date.now() - startTime
       });
@@ -689,30 +689,35 @@ function setupRoutes(app, dataStore, wss) {
   app.get('/api/v1/sensor-data', async (req, res) => {
     const startTime = Date.now();
     const { deviceId, limit } = req.query;
-    
+
     if (!deviceId) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Missing required query parameter: deviceId',
         responseTime: Date.now() - startTime
       });
     }
-    
+
     try {
       const limitNum = limit ? Math.min(parseInt(limit, 10), 1000) : 100; // Cap at 1000 for performance
       const data = await dataStore.getSensorData(deviceId, limitNum);
-      
-      addCacheHeaders(res, 60); // Cache for 1 minute
-      res.json({ 
-        success: true, 
+
+      // Prepare response and set Content-Length header
+      const responseObj = {
+        success: true,
         data,
         count: data.length,
         deviceId,
         responseTime: Date.now() - startTime
-      });
+      };
+      const responseStr = JSON.stringify(responseObj);
+      res.set('Content-Length', Buffer.byteLength(responseStr));
+      addCacheHeaders(res, 60); // Cache for 1 minute
+      console.log({ responseStr })
+      res.type('application/json').send(responseStr);
     } catch (error) {
       console.error('[API Error] /sensor-data:', error);
-      res.status(500).json({ 
-        error: 'Failed to retrieve sensor data', 
+      res.status(500).json({
+        error: 'Failed to retrieve sensor data',
         details: error.message,
         responseTime: Date.now() - startTime
       });

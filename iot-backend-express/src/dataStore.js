@@ -2,7 +2,6 @@ const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
 const { initializeDatabase, Device, SensorData, BuzzerRequest } = require('./database');
-const { CacheManager } = require('./cacheManager');
 const { DatabaseOptimizer } = require('./databaseOptimizer');
 
 const dataDir = path.join(__dirname, '../data');
@@ -44,14 +43,11 @@ class DataStore {
     this.SensorData = SensorData;
     this.BuzzerRequest = BuzzerRequest;
     
-    // Initialize high-performance cache system
-    this.cacheManager = new CacheManager();
     this.dbOptimizer = null;
     
     // Performance monitoring
     this.performanceMetrics = {
       operationsCount: 0,
-      cacheHitRate: 0,
       averageResponseTime: 0,
       totalResponseTime: 0,
       lastOptimizationTime: Date.now()
@@ -142,10 +138,18 @@ class DataStore {
           lastSeen: Date.now() // Always use current time
         }), {});
 
-        promises.push(this.dbOptimizer.optimizedUpsert(this.Device, mergedUpdate));
+        // Ensure required fields have valid values (handle null/undefined)
+        const sanitizedUpdate = {
+          ...mergedUpdate,
+          uptime: mergedUpdate.uptime ?? 0,
+          freeHeap: mergedUpdate.freeHeap ?? 0,
+          wifiRssi: mergedUpdate.wifiRssi ?? 0,
+          capabilities: mergedUpdate.capabilities || []
+        };
+
+        promises.push(this.dbOptimizer.optimizedUpsert(this.Device, sanitizedUpdate));
         
-        // Update cache
-        this.cacheManager.cacheDevice(deviceId, mergedUpdate);
+        // Process device update
       }
 
       await Promise.all(promises);
@@ -161,15 +165,29 @@ class DataStore {
     const sensorData = [...this.sensorDataQueue];
     this.sensorDataQueue.length = 0;
 
+    // Filter out any invalid data entries
+    const validSensorData = sensorData.filter(data => 
+      data && data.deviceId && (data.timestamp || data.temperature !== undefined || data.humidity !== undefined)
+    );
+
+    if (validSensorData.length === 0) {
+      console.log('📊 No valid sensor data to process in batch');
+      return;
+    }
+
     try {
-      await this.dbOptimizer.optimizedBulkCreate(this.SensorData, sensorData, {
+      await this.dbOptimizer.optimizedBulkCreate(this.SensorData, validSensorData, {
         ignoreDuplicates: true,
         batchSize: 500
       });
 
-      console.log(`📊 Batch processed ${sensorData.length} sensor data entries`);
+      console.log(`📊 Batch processed ${validSensorData.length} sensor data entries`);
     } catch (error) {
       console.error('Batch sensor data error:', error);
+      // Re-queue failed data for retry (with limit to prevent infinite loops)
+      if (validSensorData.length < 100) {
+        this.sensorDataQueue.push(...validSensorData);
+      }
     }
   }
 
@@ -179,20 +197,32 @@ class DataStore {
     const requests = [...this.buzzerRequestQueue];
     this.buzzerRequestQueue.length = 0;
 
+    // Filter out invalid requests
+    const validRequests = requests.filter(request => 
+      request && request.deviceId && request.requestedAt
+    );
+
+    if (validRequests.length === 0) {
+      console.log('🔔 No valid buzzer requests to process in batch');
+      return;
+    }
+
     try {
-      await this.dbOptimizer.optimizedBulkCreate(this.BuzzerRequest, requests, {
+      await this.dbOptimizer.optimizedBulkCreate(this.BuzzerRequest, validRequests, {
         ignoreDuplicates: true
       });
 
-      console.log(`🔔 Batch processed ${requests.length} buzzer requests`);
+      console.log(`🔔 Batch processed ${validRequests.length} buzzer requests`);
     } catch (error) {
       console.error('Batch buzzer request error:', error);
+      // Re-queue failed requests for retry (with limit)
+      if (validRequests.length < 50) {
+        this.buzzerRequestQueue.push(...validRequests);
+      }
     }
   }
 
   updatePerformanceMetrics() {
-    const cacheStats = this.cacheManager.getOverallStats();
-    this.performanceMetrics.cacheHitRate = cacheStats.devices.hitRate;
     this.performanceMetrics.operationsCount += 1;
     
     // Log performance summary
@@ -242,21 +272,7 @@ class DataStore {
       return { ...device, lastSeen: Date.now() };
     }
 
-    // Check cache first
-    const cachedDevice = this.cacheManager.getCachedDevice(device.id);
-    if (cachedDevice && Date.now() - cachedDevice.lastSeen < 30000) { // 30 seconds cache
-      // Update cache with new data but don't hit database immediately
-      const updatedDevice = { ...cachedDevice, ...device, lastSeen: Date.now() };
-      this.cacheManager.cacheDevice(device.id, updatedDevice);
-      
-      // Queue for batch update
-      this.deviceUpdateQueue.set(device.id, updatedDevice);
-      
-      this.updateResponseTime(startTime);
-      return updatedDevice;
-    }
-
-    // If not in cache or cache is stale, queue for immediate processing
+    // Queue device update for batch processing
     await this.dbReady;
     
     const deviceData = {
@@ -276,9 +292,7 @@ class DataStore {
       // Use optimized upsert
       const [deviceRecord, created] = await this.dbOptimizer.optimizedUpsert(this.Device, deviceData);
       
-      // Cache the result
-      this.cacheManager.cacheDevice(device.id, deviceRecord);
-      
+      // Return the device record
       console.log(`${created ? '🆕 Registered' : '🔄 Updated'} device: ${device.id}`);
       this.updateResponseTime(startTime);
       return deviceRecord;
@@ -299,13 +313,6 @@ class DataStore {
       return null;
     }
 
-    // Check cache first
-    const cached = this.cacheManager.getCachedDevice(deviceId);
-    if (cached) {
-      this.updateResponseTime(startTime);
-      return cached;
-    }
-
     await this.dbReady;
     
     try {
@@ -313,10 +320,7 @@ class DataStore {
         where: { id: deviceId }
       });
       
-      if (device) {
-        this.cacheManager.cacheDevice(deviceId, device);
-      }
-      
+      // Return the device
       this.updateResponseTime(startTime);
       return device;
     } catch (error) {
@@ -334,14 +338,6 @@ class DataStore {
       return [];
     }
 
-    // Check cache for recent query
-    const cacheKey = 'devices:all';
-    const cached = this.cacheManager.getCachedQuery(cacheKey);
-    if (cached) {
-      this.updateResponseTime(startTime);
-      return cached;
-    }
-
     await this.dbReady;
     
     try {
@@ -350,14 +346,7 @@ class DataStore {
         limit: 100 // Reasonable limit for UI
       });
       
-      // Cache the result
-      this.cacheManager.cacheQuery(cacheKey, devices);
-      
-      // Also cache individual devices
-      devices.forEach(device => {
-        this.cacheManager.cacheDevice(device.id, device);
-      });
-      
+      // Return the devices
       this.updateResponseTime(startTime);
       return devices;
     } catch (error) {
@@ -383,15 +372,29 @@ class DataStore {
     await this.dbReady;
     
     try {
-      const updateData = { ...updates, lastSeen: Date.now() };
+      // Sanitize update data to prevent null violations
+      const updateData = { 
+        ...updates, 
+        lastSeen: Date.now()
+      };
+      
+      // Ensure required fields have valid values if they're being updated
+      if ('uptime' in updateData && updateData.uptime == null) {
+        updateData.uptime = 0;
+      }
+      if ('freeHeap' in updateData && updateData.freeHeap == null) {
+        updateData.freeHeap = 0;
+      }
+      if ('wifiRssi' in updateData && updateData.wifiRssi == null) {
+        updateData.wifiRssi = 0;
+      }
       
       // Use optimized update
       await this.dbOptimizer.optimizedUpdate(this.Device, updateData, {
         where: { id: deviceId }
       });
       
-      // Invalidate cache and get fresh data
-      this.cacheManager.invalidateDevice(deviceId);
+      // Get the updated device
       const updatedDevice = await this.getDevice(deviceId);
       
       this.updateResponseTime(startTime);
@@ -431,33 +434,25 @@ class DataStore {
       customData: data.customData
     };
 
-    // Auto-register device if not in cache (non-blocking for high throughput)
-    const cachedDevice = this.cacheManager.getCachedDevice(deviceId);
-    if (!cachedDevice) {
-      // Queue device registration for batch processing
-      const deviceData = {
-        id: deviceId,
-        name: data.deviceName || deviceId,
-        type: data.deviceType || 'sensor',
-        ipAddress: data.ipAddress || '',
-        status: 'online',
-        lastSeen: Date.now(),
-        capabilities: []
-      };
-      this.deviceUpdateQueue.set(deviceId, deviceData);
-      this.cacheManager.cacheDevice(deviceId, deviceData);
-    } else {
-      // Update cached device info
-      const updatedDevice = { ...cachedDevice, lastSeen: Date.now(), status: 'online' };
-      this.cacheManager.cacheDevice(deviceId, updatedDevice);
-      this.deviceUpdateQueue.set(deviceId, updatedDevice);
-    }
+    // Auto-register device if not already registered
+    const deviceData = {
+      id: deviceId,
+      name: data.deviceName || deviceId,
+      type: data.deviceType || 'sensor',
+      ipAddress: data.ipAddress || '',
+      status: 'online',
+      lastSeen: Date.now(),
+      uptime: 0,
+      freeHeap: 0,
+      wifiRssi: 0,
+      capabilities: []
+    };
+    this.deviceUpdateQueue.set(deviceId, deviceData);
 
     // Queue sensor data for batch processing (high-throughput mode)
     this.sensorDataQueue.push(payload);
     
-    // Cache latest sensor data for quick retrieval
-    this.cacheManager.cacheSensorData(deviceId, payload);
+    // Return the payload
 
     this.updateResponseTime(startTime);
     console.log(`� Queued sensor data for device: ${deviceId} (batch processing)`);
@@ -472,14 +467,6 @@ class DataStore {
       return [];
     }
 
-    // Check cache first
-    const cacheKey = `sensor:${deviceId}:${limit}`;
-    const cached = this.cacheManager.getCachedQuery(cacheKey);
-    if (cached) {
-      this.updateResponseTime(startTime);
-      return cached;
-    }
-
     await this.dbReady;
     
     try {
@@ -488,10 +475,7 @@ class DataStore {
         order: [['timestamp', 'DESC']],
         limit
       });
-      
-      // Cache the result
-      this.cacheManager.cacheQuery(cacheKey, sensorData);
-      
+      // Return the sensor data
       this.updateResponseTime(startTime);
       return sensorData;
     } catch (error) {
@@ -523,8 +507,7 @@ class DataStore {
     // Queue for batch processing (high-throughput mode)
     this.buzzerRequestQueue.push(requestData);
     
-    // Cache the request for immediate retrieval
-    this.cacheManager.cacheBuzzerRequest(deviceId, requestData);
+    // Return the request data
     
     this.updateResponseTime(startTime);
     console.log(`🔔 Queued buzzer request for device: ${deviceId} (batch processing)`);
@@ -539,17 +522,6 @@ class DataStore {
       return { status: 'no_requests' };
     }
     
-    // Check cache first
-    const cached = this.cacheManager.getCachedBuzzerRequest(deviceId);
-    if (cached) {
-      this.updateResponseTime(startTime);
-      return {
-        status: cached.status,
-        lastRequestedAt: cached.requestedAt,
-        lastBuzzedAt: cached.buzzedAt
-      };
-    }
-
     await this.dbReady;
     
     try {
@@ -563,9 +535,7 @@ class DataStore {
         return { status: 'no_requests' };
       }
       
-      // Cache the result
-      this.cacheManager.cacheBuzzerRequest(deviceId, request);
-      
+      // Return the status
       this.updateResponseTime(startTime);
       return {
         status: request.status,
@@ -605,10 +575,7 @@ class DataStore {
       
       const updatedRequest = await this.dbOptimizer.optimizedFindByPk(this.BuzzerRequest, requestId);
       
-      // Update cache if we have the device ID
-      if (updatedRequest && updatedRequest.deviceId) {
-        this.cacheManager.cacheBuzzerRequest(updatedRequest.deviceId, updatedRequest);
-      }
+      // Return the updated request
       
       this.updateResponseTime(startTime);
       console.log(`✅ Completed buzzer request: ${requestId}`);
@@ -628,14 +595,6 @@ class DataStore {
       return [];
     }
     
-    // Check cache first
-    const cacheKey = `buzzer:${deviceId}:${limit}`;
-    const cached = this.cacheManager.getCachedQuery(cacheKey);
-    if (cached) {
-      this.updateResponseTime(startTime);
-      return cached;
-    }
-
     await this.dbReady;
     
     try {
@@ -644,10 +603,7 @@ class DataStore {
         order: [['requestedAt', 'DESC']],
         limit
       });
-      
-      // Cache the result
-      this.cacheManager.cacheQuery(cacheKey, requests);
-      
+      // Return the requests
       this.updateResponseTime(startTime);
       return requests;
     } catch (error) {
