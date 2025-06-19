@@ -1,7 +1,7 @@
 const fs = require('fs');
 const fsp = require('fs').promises;
 const path = require('path');
-const { initializeDatabase, Device, SensorData } = require('./database');
+const { initializeDatabase, Device, SensorData, BuzzerRequest } = require('./database');
 
 const dataDir = path.join(__dirname, '../data');
 const recordingsDir = path.join(__dirname, '../recordings');
@@ -41,6 +41,7 @@ class DataStore {
     this.SensorData = SensorData;
     this.dbReady = this.initializeDatabase();
     this.initializeCleanup();
+    this.BuzzerRequest = BuzzerRequest;
   }
 
   async initializeDatabase() {
@@ -186,6 +187,72 @@ class DataStore {
     return await this.SensorData.findAll({
       where: { deviceId },
       order: [['timestamp', 'DESC']],
+      limit
+    });
+  }
+
+  // --- BUZZER REQUEST OPERATIONS ---
+  async createBuzzerRequest(deviceId) {
+    await this.dbReady;
+    
+    if (!deviceId) {
+      throw new Error('Device ID is required');
+    }
+    
+    const request = await this.BuzzerRequest.create({
+      deviceId,
+      requestedAt: Date.now(),
+      status: 'pending'
+    });
+    
+    console.log(`🔔 Created buzzer request for device: ${deviceId}`);
+    return request;
+  }
+
+  async getBuzzerStatus(deviceId) {
+    await this.dbReady;
+    
+    const request = await this.BuzzerRequest.findOne({
+      where: { deviceId },
+      order: [['requestedAt', 'DESC']]
+    });
+    
+    if (!request) {
+      return { status: 'no_requests' };
+    }
+    
+    return {
+      status: request.status,
+      lastRequestedAt: request.requestedAt,
+      lastBuzzedAt: request.buzzedAt
+    };
+  }
+
+  async completeBuzzerRequest(requestId) {
+    await this.dbReady;
+    
+    const [updated] = await this.BuzzerRequest.update(
+      {
+        status: 'completed',
+        buzzedAt: Date.now()
+      },
+      { where: { id: requestId } }
+    );
+    
+    if (updated === 0) {
+      throw new Error('Buzzer request not found');
+    }
+    
+    console.log(`✅ Completed buzzer request: ${requestId}`);
+    return await this.BuzzerRequest.findByPk(requestId);
+  }
+
+  async getBuzzerRequests(deviceId, limit = 100) {
+    await this.dbReady;
+    
+    return await this.BuzzerRequest.findAll({
+      where: { deviceId },
+      order: [['requestedAt', 'DESC']],
       limit
     });
   }

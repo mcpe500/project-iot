@@ -5,6 +5,7 @@ import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { ENV_CONFIG, getWebSocketUrl } from '../../services/config';
+import { requestBuzzer, getBuzzerStatus } from '@/services/api';
 
 const MAX_FPS = 10;
 const FRAME_INTERVAL_MS = 1000 / MAX_FPS;
@@ -35,6 +36,31 @@ export default function LiveStreamScreen() {
   const [isAddingFace, setIsAddingFace] = useState(false);
   const [faceName, setFaceName] = useState('');
   const [showAddFaceModal, setShowAddFaceModal] = useState(false);
+
+  // Buzzer control state
+  const [selectedDevice, setSelectedDevice] = useState<string | null>('esp32-device-1');
+  const [buzzerStatus, setBuzzerStatus] = useState(false);
+  const [isBuzzerLoading, setIsBuzzerLoading] = useState(false);
+
+  // Buzzer control handler
+  const handleBuzzerControl = async (action: 'on' | 'off') => {
+    if (!selectedDevice) {
+      Alert.alert('Error', 'No device selected');
+      return;
+    }
+
+    setIsBuzzerLoading(true);
+    try {
+      await requestBuzzer(selectedDevice, action === 'on');
+      setBuzzerStatus(action === 'on');
+      Alert.alert('Success', `Buzzer turned ${action}`);
+    } catch (error) {
+      console.error('Buzzer control error:', error);
+      Alert.alert('Error', 'Failed to control buzzer');
+    } finally {
+      setIsBuzzerLoading(false);
+    }
+  };
 
   const wsRef = useRef<WebSocket | null>(null);
   const frameCountRef = useRef(0);
@@ -191,6 +217,41 @@ export default function LiveStreamScreen() {
       streamIntervalRef.current = setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
     }
     setIsSendingStream(!currentlySending);
+  };
+
+  // Fetch buzzer status when device changes
+  useEffect(() => {
+    if (selectedDevice) {
+      setIsBuzzerLoading(true);
+      getBuzzerStatus(selectedDevice)
+        .then(response => {
+          setBuzzerStatus(response.status);
+        })
+        .catch(error => {
+          console.error('Error fetching buzzer status:', error);
+          Alert.alert('Error', 'Failed to fetch buzzer status');
+        })
+        .finally(() => setIsBuzzerLoading(false));
+    }
+  }, [selectedDevice]);
+
+  const handleBuzzerToggle = async () => {
+    if (!selectedDevice) {
+      Alert.alert('Error', 'Please select a device first');
+      return;
+    }
+
+    setIsBuzzerLoading(true);
+    try {
+      const newStatus = !buzzerStatus;
+      await requestBuzzer(selectedDevice, newStatus);
+      setBuzzerStatus(newStatus);
+    } catch (error) {
+      console.error('Error toggling buzzer:', error);
+      Alert.alert('Error', 'Failed to toggle buzzer');
+    } finally {
+      setIsBuzzerLoading(false);
+    }
   };
 
   const handleAddPermittedFace = async () => {
@@ -400,6 +461,28 @@ export default function LiveStreamScreen() {
             <MaterialCommunityIcons name="face-recognition" size={24} color="white" />
             <Text style={styles.buttonText}>Add Permitted Face</Text>
           </TouchableOpacity>
+
+          <View style={styles.buzzerControlContainer}>
+            <Text style={styles.buzzerStatusText}>
+              Buzzer Status: {buzzerStatus ? 'ON' : 'OFF'}
+            </Text>
+            <View style={styles.buzzerButtonRow}>
+              <TouchableOpacity
+                style={[styles.buzzerButton, styles.buzzerOnButton]}
+                onPress={() => handleBuzzerControl('on')}
+                disabled={isBuzzerLoading || buzzerStatus}
+              >
+                <Text style={styles.buzzerButtonText}>Turn On</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.buzzerButton, styles.buzzerOffButton]}
+                onPress={() => handleBuzzerControl('off')}
+                disabled={isBuzzerLoading || !buzzerStatus}
+              >
+                <Text style={styles.buzzerButtonText}>Turn Off</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </ScrollView>
       )}
     </View>
@@ -612,6 +695,44 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
+  },
+  buzzerControlContainer: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  buzzerStatusText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  buzzerButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    gap: 16,
+  },
+  buzzerButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buzzerOnButton: {
+    backgroundColor: '#4CAF50',
+  },
+  buzzerOffButton: {
+    backgroundColor: '#F44336',
+  },
+  buzzerButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   modalButton: {
     flex: 1,

@@ -17,7 +17,7 @@ int buzzerPattern = 0; // 0=off, 1=single beep, 2=double beep, 3=continuous, 4=a
 
 void setup() {
   // Initialize serial communication
-  Serial.begin(115200);
+  Serial.begin(921600);  // Initialize serial for debugging
   Serial.println("ESP32 Buzzer Controller Starting...");
   
   // Configure buzzer pins

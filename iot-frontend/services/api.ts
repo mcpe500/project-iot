@@ -43,6 +43,12 @@ interface SensorDataResponse {
   }>;
 }
 
+interface BuzzerStatus {
+  deviceId: string;
+  status: boolean;
+  lastUpdated: number;
+}
+
 // Create axios instance with default configuration
 const api = axios.create({
   baseURL: CONFIG.BACKEND_URL,
@@ -142,6 +148,15 @@ export const streamCameraFrame = async (
       'Content-Type': 'application/octet-stream'
     }
   });
+};
+
+// Buzzer Control API
+export const requestBuzzer = async (deviceId: string, status: boolean): Promise<BuzzerStatus> => {
+  return api.post('/api/v1/buzzer/control', { deviceId, status });
+};
+
+export const getBuzzerStatus = async (deviceId: string): Promise<BuzzerStatus> => {
+  return api.get(`/api/v1/buzzer/status?deviceId=${encodeURIComponent(deviceId)}`);
 };
 
 export default api;

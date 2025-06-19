@@ -15,6 +15,7 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 // import { IconSymbol, IconName } from '@/components/IconSymbol';
 import { CONFIG } from '@/config';
+import { requestBuzzer } from '@/services/api';
 import { IconName } from '@/components/IconSymbol';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 
@@ -112,8 +113,14 @@ export default function DevicesScreen() {
     setSendingCommand(commandId);
     try {
       console.log(`Sending command: ${command} to device ${deviceId} with params:`, params);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      Alert.alert('Success', `Command "${command}" sent to device ${deviceId}.`);
+      
+      if (command === 'buzzer_on' || command === 'buzzer_off') {
+        await requestBuzzer(deviceId, command === 'buzzer_on');
+        Alert.alert('Success', `Buzzer turned ${command === 'buzzer_on' ? 'ON' : 'OFF'}`);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        Alert.alert('Success', `Command "${command}" sent to device ${deviceId}.`);
+      }
     } catch (error: any) {
       console.error(`Error sending command ${command} to device ${deviceId}:`, error);
       Alert.alert('Error', `Failed to send command "${command}". ${error.message || ''}`);
@@ -171,6 +178,8 @@ export default function DevicesScreen() {
         ? [{ name: 'Snapshot', action: 'snapshot', style: styles.successButton, icon: 'camera-iris' as IconName }]
         : []),
       { name: 'Ping', action: 'ping', style: styles.controlButton, icon: 'access-point-network' as IconName },
+      { name: 'Buzzer On', action: 'buzzer_on', style: styles.successButton, icon: 'bell' as IconName },
+      { name: 'Buzzer Off', action: 'buzzer_off', style: styles.dangerButton, icon: 'bell-off' as IconName },
     ];
 
     return (
