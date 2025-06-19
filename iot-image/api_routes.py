@@ -27,10 +27,18 @@ async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = 
 
 @router.post("/stream/stream")
 async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown")):
+    """
+    High-speed streaming endpoint for ESP32-CAM integration.
+    """
     contents = await image.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Empty image file.")
     
+    # Register/update device quickly
+    device_data = {'id': deviceId, 'name': f'Device-{deviceId}', 'status': 'online'}
+    data_store.register_device(device_data)
+    
+    # Perform recognition asynchronously
     result = await data_store.perform_face_recognition(contents)
     result["deviceId"] = deviceId
     return JSONResponse(content=result)
@@ -60,23 +68,21 @@ async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...
 @router.post("/recognize")
 async def recognize_endpoint(image: UploadFile = File(...)):
     """
-    This endpoint is specifically for face recognition requests from the backend.
+    Optimized endpoint for high-speed face recognition from the backend.
     """
-    logger.info(f"Received request for /api/v1/recognize. File: {image.filename}")
     start_time = time.time()
     
     contents = await image.read()
     if not contents:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    # Perform the recognition
+    # Perform the recognition (now optimized for speed)
     result = await data_store.perform_face_recognition(contents)
     
-    # Add processing time to the response for logging and debugging
+    # Add processing time to the response
     processing_time = time.time() - start_time
-    result["processing_time"] = round(processing_time, 4)
+    result["total_processing_time"] = round(processing_time, 4)
     
-    logger.info(f"Returning recognition result: {result}")
     return JSONResponse(content=result)
 
 @router.get("/devices")

@@ -13,7 +13,11 @@ load_dotenv()
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', '9001'))
 RELOAD_DEBUG = os.getenv('RELOAD_DEBUG', 'False').lower() == 'true'
-UVICORN_LOG_LEVEL = os.getenv('UVICORN_LOG_LEVEL', 'info').lower()
+UVICORN_LOG_LEVEL = os.getenv('UVICORN_LOG_LEVEL', 'warning').lower()  # Reduced verbosity for performance
+
+# Performance optimizations
+MAX_WORKERS = int(os.getenv('MAX_WORKERS', '4'))
+FACE_RECOGNITION_TIMEOUT = float(os.getenv('FACE_RECOGNITION_TIMEOUT', '3.0'))  # Fast timeout
 
 # --- Logging Configuration ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

@@ -41,26 +41,13 @@ const Config defaultConfig = {
   "BIZNET357",           // WIFI_SSID
   "ivan4321",       // WIFI_PASSWORD  
   "203.175.11.145",           // SERVER_IP
-  9004,                      // SERVER_PORT
+  9003,                      // SERVER_PORT
   "esp32-multi-sensor-1",    // DEVICE_ID
   "Lab Sensor Unit",         // DEVICE_NAME
   "DHT11-LDR-HCSR04"        // DEVICE_TYPE
 };
 
-// State machine states for buzzer
-enum BuzzerState {
-  STATE_BEEP_SHORT,
-  STATE_PAUSE_1,
-  STATE_BEEP_LONG,
-  STATE_PAUSE_3
-};
-
-BuzzerState currentState = STATE_BEEP_SHORT;
-unsigned long previousMillis = 0;
-const unsigned long beepShortDuration = 200;
-const unsigned long pause1Duration = 1000;
-const unsigned long beepLongDuration = 500;
-const unsigned long pause3Duration = 3000;
+// --- REMOVED --- State machine and related timing variables for the complex buzzer pattern
 
 // Sensor variables
 unsigned long lastSensorRead = 0;
@@ -79,6 +66,7 @@ bool buzzerEnabled = true;
 bool buzzerActive = false;
 String buzzerRequestId = "";
 unsigned long lastBuzzerPoll = 0;
+const unsigned long singleBeepDuration = 250; // How long a single beep should be (in ms)
 
 // Global sensor variables for backend sending
 float distance = 0.0;
@@ -157,40 +145,8 @@ void loop() {
     lastSendMillis = currentMillis;
   }
   
-  // Handle buzzer state machine
-  switch (currentState) {
-    case STATE_BEEP_SHORT:
-      if (buzzerEnabled) digitalWrite(BUZZER_PIN, HIGH);
-      if (currentMillis - previousMillis >= beepShortDuration) {
-        digitalWrite(BUZZER_PIN, LOW);
-        previousMillis = currentMillis;
-        currentState = STATE_PAUSE_1;
-      }
-      break;
-      
-    case STATE_PAUSE_1:
-      if (currentMillis - previousMillis >= pause1Duration) {
-        previousMillis = currentMillis;
-        currentState = STATE_BEEP_LONG;
-      }
-      break;
-      
-    case STATE_BEEP_LONG:
-      if (buzzerEnabled) digitalWrite(BUZZER_PIN, HIGH);
-      if (currentMillis - previousMillis >= beepLongDuration) {
-        digitalWrite(BUZZER_PIN, LOW);
-        previousMillis = currentMillis;
-        currentState = STATE_PAUSE_3;
-      }
-      break;
-      
-    case STATE_PAUSE_3:
-      if (currentMillis - previousMillis >= pause3Duration) {
-        previousMillis = currentMillis;
-        currentState = STATE_BEEP_SHORT;
-      }
-      break;
-  }
+  // --- REMOVED --- The buzzer state machine is no longer needed in the main loop.
+  // The entire buzzer logic is now handled within pollBuzzerStatus() and activateBuzzer().
 }
 
 // =================================================================
@@ -398,17 +354,24 @@ void pollBuzzerStatus() {
   http.end();
 }
 
+// --- MODIFIED --- This function now performs a single, self-contained beep.
 void activateBuzzer(String requestId) {
-  buzzerActive = true;
+  buzzerActive = true; // Set our state to active to prevent re-triggering
   buzzerRequestId = requestId;
-  digitalWrite(BUZZER_PIN, HIGH);
   
   Serial.print("[");
   Serial.print(millis());
-  Serial.print("] Buzzer activated for request: ");
+  Serial.print("] Buzzer activated by request: ");
   Serial.println(requestId);
   
-  // Send completion notification
+  // Perform the single beep if the buzzer is globally enabled
+  if (buzzerEnabled) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(singleBeepDuration); // Block for the beep duration - this is fine for a short, one-off event.
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+  
+  // Immediately send completion notification to the server
   HTTPClient http;
   String url = "http://" + String(config.serverIp) + ":" + String(config.serverPort) +
                "/api/v1/buzzer/complete/" + requestId;
@@ -416,33 +379,28 @@ void activateBuzzer(String requestId) {
   http.addHeader("Content-Type", "application/json");
   
   JsonDocument doc;
-  doc["completedAt"] = millis();
+  doc["completedAt"] = millis(); // You can send any relevant data
   String jsonPayload;
   serializeJson(doc, jsonPayload);
   
   int httpCode = http.PATCH(jsonPayload);
   if (httpCode > 0) {
-    Serial.print("[");
-    Serial.print(millis());
-    Serial.print("] Buzzer completion sent. Response: ");
-    Serial.println(httpCode);
+    Serial.printf("Buzzer completion sent for %s. Response: %d\n", requestId.c_str(), httpCode);
   } else {
-    Serial.print("[");
-    Serial.print(millis());
-    Serial.print("] Buzzer completion failed. Error: ");
-    Serial.println(http.errorToString(httpCode).c_str());
+    Serial.printf("Buzzer completion failed for %s. Error: %s\n", requestId.c_str(), http.errorToString(httpCode).c_str());
   }
   http.end();
 }
 
+// --- MODIFIED --- This function now simply resets the local state.
 void deactivateBuzzer() {
   buzzerActive = false;
   buzzerRequestId = "";
-  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW); // Ensure buzzer is off, just in case.
   
   Serial.print("[");
   Serial.print(millis());
-  Serial.println("] Buzzer deactivated");
+  Serial.println("] Buzzer state reset. Ready for next request.");
 }
 
 // --- Network Functions ---

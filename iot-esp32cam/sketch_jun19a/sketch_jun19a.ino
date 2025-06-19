@@ -12,14 +12,14 @@
 // ===========================
 
 // Network Configuration
-#define WIFI_SSID "weef1"
-#define WIFI_PASSWORD "1234567899"
+#define WIFI_SSID "BIZNET357"
+#define WIFI_PASSWORD "ivan4321"
 
 // Server Configuration
 #define SERVER_HOST "203.175.11.145"
-#define SERVER_PORT 9004
-#define SERVER_PATH "/api/v1/stream/stream"
-#define SERVER_URL "http://" SERVER_HOST ":" "9004" SERVER_PATH
+#define SERVER_PORT 9003
+#define SERVER_PATH "/api/v1/stream/fast"  // Use the high-performance endpoint
+#define SERVER_URL "http://" SERVER_HOST ":" "9003" SERVER_PATH
 #define API_KEY "dev-api-key-change-in-production"
 #define DEVICE_ID "ESP32-CAM-001"
 
@@ -45,7 +45,8 @@
 // Performance Configuration
 #define TARGET_FPS 10
 #define FRAME_INTERVAL_MS (1000 / TARGET_FPS)
-#define HTTP_TIMEOUT_MS 5000 // Increased timeout for single large upload
+#define HTTP_TIMEOUT_MS 3000 // Reduced timeout for faster response
+#define MAX_RETRIES 2 // Limit retries for failed uploads
 
 // Global variables
 WiFiClient client;
@@ -53,6 +54,14 @@ unsigned long lastFrameTime = 0;
 uint32_t frameCount = 0;
 uint32_t successCount = 0;
 uint32_t dropCount = 0;
+unsigned long deviceStartTime = 0; // For tracking uptime
+int8_t wifiRetryCount = 0; // For tracking WiFi connection attempts
+
+// Buzzer control variables
+bool buzzerActive = false;
+unsigned long lastBuzzerPoll = 0;
+const unsigned long BUZZER_POLL_INTERVAL = 150; // Poll every 150ms
+const unsigned long SINGLE_BEEP_DURATION = 200; // Duration of single beep in ms
 
 // ===========================
 // Camera Initialization
@@ -137,11 +146,18 @@ bool sendFrameToServer(camera_fb_t* fb) {
     return false;
   }
 
-  // Set standard headers
-  // CRITICAL FIX: Set the Content-Type so the server knows it's a JPEG image
+  // Set standard headers with device information
   http.addHeader("Content-Type", "image/jpeg");
   http.addHeader("Device-ID", DEVICE_ID);
   http.addHeader("X-API-Key", API_KEY);
+  http.addHeader("Device-Name", "ESP32-CAM OV2640");
+  http.addHeader("Device-Type", "ESP32-CAM");
+  http.addHeader("Device-IP", WiFi.localIP().toString());
+  http.addHeader("Device-Status", "online");
+  http.addHeader("Device-Uptime", String(millis() - deviceStartTime));
+  http.addHeader("Device-FreeHeap", String(ESP.getFreeHeap()));
+  http.addHeader("Device-WifiRssi", String(WiFi.RSSI()));
+  http.addHeader("Device-Capabilities", "[\"camera\",\"image_capture\",\"ov2640\",\"wifi\"]");
   http.setTimeout(HTTP_TIMEOUT_MS);
 
   // Send the entire frame buffer in one POST request.
@@ -154,11 +170,15 @@ bool sendFrameToServer(camera_fb_t* fb) {
     Serial.printf("[HTTP] POST... code: %d\n", httpCode);
     if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_ACCEPTED) {
       String payload = http.getString();
-      Serial.println(payload);
+      Serial.printf("[HTTP] Response: %s\n", payload.c_str());
       success = true;
+    } else if (httpCode >= 400) {
+      String errorPayload = http.getString();
+      Serial.printf("[HTTP] Server error (%d): %s\n", httpCode, errorPayload.c_str());
     }
   } else {
     Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
+    Serial.println("[HTTP] Check server connectivity and URL");
   }
 
   http.end();
@@ -173,37 +193,62 @@ void captureAndSendFrame() {
     return;
   }
 
-  // The function now directly sends the frame
-  if (sendFrameToServer(fb)) {
+  // Quick frame size check for performance
+  if (fb->len == 0) {
+    Serial.println("Empty frame buffer");
+    esp_camera_fb_return(fb);
+    dropCount++;
+    return;
+  }
+
+  // Send frame with timeout handling
+  bool success = sendFrameToServer(fb);
+  if (success) {
     successCount++;
   } else {
     dropCount++;
   }
 
   esp_camera_fb_return(fb); // IMPORTANT: Always return the frame buffer!
+  
+  // Print stats less frequently for performance
+  frameCount++;
+  if (frameCount % 50 == 0) {
+    Serial.printf("Frames: %d, Success: %d, Dropped: %d, Success Rate: %.1f%%\n",
+                 frameCount, successCount, dropCount, 
+                 (float)successCount / frameCount * 100.0);
+  }
 }
 
 // ===========================
 // Main Program
 // ===========================
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
+  deviceStartTime = millis(); // Initialize device uptime tracking
+  
+  Serial.println("=== ESP32-CAM OV2640 Initialization ===");
+  Serial.printf("Device ID: %s\n", DEVICE_ID);
+  Serial.printf("Server URL: %s\n", SERVER_URL);
+  Serial.printf("Target FPS: %d\n", TARGET_FPS);
+  
   initWiFi();
   initCamera();
+  
   Serial.println("Setup complete. Starting image capture loop...");
+  Serial.println("Device will register automatically with server on first frame");
+  Serial.println("Buzzer control initialized");
 }
 
 void loop() {
   unsigned long currentTime = millis();
+  
+  // Maintain target FPS with precise timing
   if (currentTime - lastFrameTime >= FRAME_INTERVAL_MS) {
     lastFrameTime = currentTime;
     captureAndSendFrame();
-
-    if (frameCount % 10 == 0) {
-      Serial.printf("Frames: %d, Success: %d, Dropped: %d\n",
-                   frameCount, successCount, dropCount);
-    }
-    frameCount++;
   }
-  delay(1); // Small delay to prevent watchdog timer issues
+  
+  // Minimal delay for watchdog and other tasks
+  delay(1);
 }

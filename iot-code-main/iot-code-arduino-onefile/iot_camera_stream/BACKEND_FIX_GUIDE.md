@@ -77,9 +77,9 @@ The backend server needs:
 With the new retry logic, you should see:
 ```
 Attempting upload to primary server (retry 1/3, timeout: 5000ms)
-HTTP Error: 404 for URL: http://203.175.11.145:9004/api/v1/stream/stream
+HTTP Error: 404 for URL: http://203.175.11.145:9003/api/v1/stream/stream
 Attempting upload to primary server (retry 2/3, timeout: 3000ms)
-HTTP Error: -11 for URL: http://203.175.11.145:9004/api/v1/stream/stream
+HTTP Error: -11 for URL: http://203.175.11.145:9003/api/v1/stream/stream
 Primary server failed, trying fallback server...
 ✅ Fallback server upload successful
 
