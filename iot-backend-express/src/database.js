@@ -4,14 +4,15 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
-const dbName = process.env.DB_DATABASE || 'iot_dashboard';
-const dbUser = process.env.DB_USER || 'root';
-const dbPassword = process.env.DB_PASSWORD || '';
-const dbHost = process.env.DB_HOST || 'localhost';
-const dbPort = process.env.DB_PORT || 3306;
+if (process.env.USEDB === 'true') {
+  const dbName = process.env.DB_DATABASE || 'iot_dashboard';
+  const dbUser = process.env.DB_USER || 'root';
+  const dbPassword = process.env.DB_PASSWORD || '';
+  const dbHost = process.env.DB_HOST || 'localhost';
+  const dbPort = process.env.DB_PORT || 3306;
 
-// Create Sequelize instance (will be re-created if DB is missing)
-let sequelize = new Sequelize(dbName, dbUser, dbPassword, {
+  // Create Sequelize instance (will be re-created if DB is missing)
+  let sequelize = new Sequelize(dbName, dbUser, dbPassword, {
   host: dbHost,
   port: dbPort,
   dialect: 'mysql',
@@ -120,4 +121,8 @@ module.exports = {
   SensorData: SensorDataModel(sequelize),
   BuzzerRequest: BuzzerRequestModel(sequelize),
   initializeDatabase
-};
+  };
+} else {
+  console.log('⚠️  Database initialization skipped (USEDB=false)');
+  const sequelize = {}; // Return empty object for compatibility
+}
