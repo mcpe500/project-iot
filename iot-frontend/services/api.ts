@@ -18,6 +18,8 @@ const RETRY_CONFIG = {
   retryNetworkErrors: true
 };
 
+import { SensorDataItem } from '../types/sensor';
+
 // Enhanced type definitions
 interface DeviceRegistration {
   id: string;
@@ -51,13 +53,7 @@ interface DeviceInfo {
 }
 
 interface SensorDataResponse {
-  data: Array<{
-    timestamp: number;
-    temperature: number;
-    humidity: number;
-    distance: number;
-    lightLevel: number;
-  }>;
+  data: SensorDataItem[];
 }
 
 interface BuzzerStatus {
@@ -219,11 +215,12 @@ export const ingestSensorData = async (sensorData: SensorData) => {
   return api.post('/api/v1/ingest/sensor-data', sensorData);
 };
 
-export const getSensorData = async (deviceId: string): Promise<{ data: any[] }> => {
+export const getSensorData = async (deviceId: string): Promise<SensorDataItem[]> => {
   if (!deviceId) {
     throw new Error('Device ID is required');
   }
-  return api.get(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}&limit=100`);
+  const response = await api.get<SensorDataResponse>(`/api/v1/sensor-data?deviceId=${encodeURIComponent(deviceId)}&limit=10`);
+  return response.data.data;
 };
 
 export const streamCameraFrame = async (

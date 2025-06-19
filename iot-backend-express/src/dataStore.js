@@ -97,7 +97,7 @@ class DataStore {
       if (this.sensorDataQueue.length > 0) {
         this.processBatchSensorData();
       }
-    }, 200); // Every 200ms
+    }, 100); // Reduced to 100ms for faster processing
 
     // Process buzzer requests
     setInterval(() => {
@@ -407,7 +407,7 @@ class DataStore {
   }
 
   // --- OPTIMIZED SENSOR DATA OPERATIONS WITH INTELLIGENT CACHING ---
-  async saveSensorData(data) {
+  async saveSensorData(data, wss) {
     const startTime = Date.now();
     
     if (!this.USEDB) {
@@ -449,14 +449,26 @@ class DataStore {
     };
     this.deviceUpdateQueue.set(deviceId, deviceData);
 
-    // Queue sensor data for batch processing (high-throughput mode)
-    this.sensorDataQueue.push(payload);
+    // Immediately save sensor data to database
+    const savedData = await this.dbOptimizer.optimizedCreate(this.SensorData, payload);
     
-    // Return the payload
+    // Real-time WebSocket notification
+    if (wss) {
+      const sensorMessage = {
+        type: 'sensor-data',
+        deviceId: deviceId,
+        timestamp: payload.timestamp
+      };
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify(sensorMessage));
+        }
+      });
+    }
 
     this.updateResponseTime(startTime);
-    console.log(`� Queued sensor data for device: ${deviceId} (batch processing)`);
-    return payload; // Return immediately without waiting for DB
+    console.log(`📊 Queued sensor data for device: ${deviceId} (batch processing)`);
+    return payload;
   }
 
   async getSensorData(deviceId, limit = 100) {
