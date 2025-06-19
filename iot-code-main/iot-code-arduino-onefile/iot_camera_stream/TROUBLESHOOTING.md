@@ -22,12 +22,12 @@ The code has been updated with enhanced error reporting to help identify the roo
 #### Step 1: Check Server Endpoint
 Verify the server URL is correct and accessible:
 ```
-Server URL: http://203.175.11.145:9003/api/v1/stream/stream
+Server URL: http://203.175.11.145:9004/api/v1/stream/stream
 ```
 
 **Common Issues:**
 - Server might be down or unreachable
-- Port 9003 might be blocked by firewall
+- Port 9004 might be blocked by firewall
 - API endpoint might have changed
 - Server might not accept multipart/form-data
 
@@ -36,19 +36,19 @@ Test the server endpoint manually using curl:
 
 ```bash
 # Test basic connectivity
-curl -v http://203.175.11.145:9003/api/v1/stream/stream
+curl -v http://203.175.11.145:9004/api/v1/stream/stream
 
 # Test with API key
-curl -v -H "X-API-Key: dev-api-key-change-in-production" http://203.175.11.145:9003/api/v1/stream/stream
+curl -v -H "X-API-Key: dev-api-key-change-in-production" http://203.175.11.145:9004/api/v1/stream/stream
 
 # Test POST with file upload
 curl -v -X POST -H "X-API-Key: dev-api-key-change-in-production" \
   -F "image=@test.jpg" \
-  http://203.175.11.145:9003/api/v1/stream/stream
+  http://203.175.11.145:9004/api/v1/stream/stream
 ```
 
 #### Step 3: Check Network Configuration
-- Verify WiFi network allows outbound connections on port 9003
+- Verify WiFi network allows outbound connections on port 9004
 - Check if corporate firewall blocks HTTP traffic
 - Try using a mobile hotspot to test
 
@@ -99,7 +99,7 @@ const char* SERVER_URL = "http://httpbin.org/post";  // Temporary test
 #### Fix 3: Disable HTTPS (if applicable)
 Ensure you're using HTTP, not HTTPS:
 ```cpp
-const char* SERVER_URL = "http://203.175.11.145:9003/api/v1/stream/stream";  // HTTP not HTTPS
+const char* SERVER_URL = "http://203.175.11.145:9004/api/v1/stream/stream";  // HTTP not HTTPS
 ```
 
 #### Fix 4: Check API Key Format

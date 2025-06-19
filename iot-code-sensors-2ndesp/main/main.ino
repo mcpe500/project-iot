@@ -41,7 +41,7 @@ const Config defaultConfig = {
   "BIZNET357",           // WIFI_SSID
   "ivan4321",       // WIFI_PASSWORD  
   "203.175.11.145",           // SERVER_IP
-  9003,                      // SERVER_PORT
+  9004,                      // SERVER_PORT
   "esp32-multi-sensor-1",    // DEVICE_ID
   "Lab Sensor Unit",         // DEVICE_NAME
   "DHT11-LDR-HCSR04"        // DEVICE_TYPE

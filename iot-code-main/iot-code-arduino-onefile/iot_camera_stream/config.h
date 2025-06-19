@@ -17,13 +17,13 @@
 // Server Configuration
 // ===========================
 #define SERVER_HOST "203.175.11.145" // <<< ADD THIS
-#define SERVER_PORT 9003             // <<< ADD THIS
+#define SERVER_PORT 9004             // <<< ADD THIS
 #define SERVER_PATH "/api/v1/stream/stream" // <<< ADD THIS
 
 // This URL is now built from the parts above, which is cleaner
-#define SERVER_URL "http://" SERVER_HOST ":" "9003" SERVER_PATH
-#define REGISTER_URL "http://" SERVER_HOST ":" "9003" "/api/v1/devices/register"
-#define HEARTBEAT_URL "http://" SERVER_HOST ":" "9003" "/api/v1/devices/heartbeat"
+#define SERVER_URL "http://" SERVER_HOST ":" "9004" SERVER_PATH
+#define REGISTER_URL "http://" SERVER_HOST ":" "9004" "/api/v1/devices/register"
+#define HEARTBEAT_URL "http://" SERVER_HOST ":" "9004" "/api/v1/devices/heartbeat"
 #define API_KEY "dev-api-key-change-in-production"
 
 // Fallback/Alternative Servers

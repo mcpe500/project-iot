@@ -8,13 +8,82 @@ const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
 const { dataDir, recordingsDir } = require('./dataStore');
-// Database is accessed through dataStore now
 
-// Multer configurations
+// Multer configurations (still needed for other uploads)
 const permittedFaceUpload = multer({ storage: multer.memoryStorage() });
-const streamMultipartUpload = multer({ storage: multer.memoryStorage() }).single('image');
 
 function setupRoutes(app, dataStore, wss) {
+
+  // =========================================================================
+  // --- PRIMARY FIX: A NEW, SIMPLIFIED STREAMING ENDPOINT ---
+  // This endpoint now specifically handles raw JPEG image uploads.
+  // =========================================================================
+  app.post('/api/v1/stream/stream', express.raw({
+    type: 'image/jpeg', // Only apply this middleware for JPEG content type
+    limit: '10mb'       // Set a reasonable limit for frame size
+  }), async (req, res) => {
+    // Get headers (headers are automatically lowercased by Express)
+    const deviceId = req.headers['device-id'] || 'unknown_device';
+
+    // Check if the body parser ran and if the body has content
+    if (!req.body || req.body.length === 0) {
+      console.warn(`[Stream API] Empty or invalid JPEG body received from ${deviceId}`);
+      return res.status(400).json({ error: 'Empty image buffer received.' });
+    }
+
+    const timestamp = Date.now();
+    const filename = `${deviceId}_${timestamp}.jpg`;
+    const filePath = path.join(dataDir, filename);
+
+    try {
+      // req.body is now the complete image buffer, thanks to express.raw()
+      await fsp.writeFile(filePath, req.body);
+
+      // --- Broadcast and recognition logic (unchanged) ---
+      const newFrameMessage = {
+        type: 'new_frame',
+        deviceId,
+        timestamp,
+        filename,
+        url: `/data/${filename}`,
+        recognition: { status: 'pending' }
+      };
+      wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(newFrameMessage));
+      });
+
+      // Perform face recognition in the background
+      dataStore.performFaceRecognition(req.body)
+        .then(recognitionResult => {
+          const recognitionCompleteMessage = { type: 'recognition_complete', filename: filename, recognition: recognitionResult };
+          wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionCompleteMessage));
+          });
+        })
+        .catch(recogErr => console.error(`[Recognition BG] Error for ${filename}:`, recogErr));
+
+      // Respond with success
+      res.status(200).json({
+        success: true,
+        message: 'Frame received successfully.',
+        filename,
+        timestamp,
+        size: req.body.length
+      });
+
+    } catch (procErr) {
+      console.error('[Stream API] Error processing raw JPEG frame:', procErr);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to process JPEG frame',
+        details: procErr.message
+      });
+    }
+  });
+
+
+  // --- ALL OTHER ROUTES BELOW ARE UNCHANGED ---
+
   // Buzzer control endpoint
   app.post('/api/v1/buzzer/control', async (req, res) => {
     try {
@@ -246,193 +315,6 @@ function setupRoutes(app, dataStore, wss) {
     } catch (error) {
       console.error('[API Error] /ingest/sensor-data:', error);
       res.status(500).json({ error: 'Failed to save sensor data', details: error.message });
-    }
-  });
-
-  // Helper function to enhance raw RGB565 images
-  async function enhanceRawImage(rawBuffer, width, height) {
-    // ... existing enhanceRawImage code ...
-    const swappedBuffer = Buffer.alloc(rawBuffer.length);
-    for (let i = 0; i < rawBuffer.length; i += 2) {
-      swappedBuffer.writeUInt16LE(rawBuffer.readUInt16BE(i), i);
-    }
-    return sharp(swappedBuffer, { raw: { width, height, channels: 2 } })
-      .jpeg({ quality: 90 })
-      .toBuffer();
-  }
-
-  // --- UNIFIED STREAMING ENDPOINT (FIXED) ---
-  app.post('/api/v1/stream/stream', (req, res) => {
-    // ... existing stream endpoint code ...
-    // This endpoint primarily deals with file system and face recognition service,
-    // not directly with the device/sensor DB tables in DataStore for this part.
-    // It does use dataStore.performFaceRecognition which is already async.
-    const contentType = req.get('Content-Type');
-    const deviceId = req.headers['x-device-id'] || 'unknown_device';
-
-    // --- BRANCH 1: RAW BINARY (OCTET-STREAM) ---
-    if (contentType && contentType.startsWith('application/octet-stream')) {
-      express.raw({ type: 'application/octet-stream', limit: '10mb' })(req, res, async (err) => {
-        if (err) {
-            console.error('[Stream API] Raw body parser error:', err);
-            return res.status(400).json({ error: 'Invalid raw body' });
-        }
-
-        const width = parseInt(req.headers['x-frame-width'], 10);
-        const height = parseInt(req.headers['x-frame-height'], 10);
-        
-        if (!width || !height || !req.body || req.body.length === 0) {
-          return res.status(400).json({ error: 'Missing frame metadata or body' });
-        }
-
-        const timestamp = Date.now();
-        const filename = `${deviceId}_${timestamp}.jpg`;
-        const filePath = path.join(dataDir, filename);
-
-        try {
-          const enhancedJpegBuffer = await enhanceRawImage(req.body, width, height);
-          await fsp.writeFile(filePath, enhancedJpegBuffer);
-
-          const newFrameMessage = {
-            type: 'new_frame',
-            deviceId,
-            timestamp,
-            filename,
-            url: `/data/${filename}`,
-            recognition: { status: 'pending' }
-          };
-          wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(newFrameMessage));
-          });
-          
-          // Perform recognition in the background, don't await it here for response
-          dataStore.performFaceRecognition(enhancedJpegBuffer).then(recognitionResult => {
-              const recognitionCompleteMessage = {
-                  type: 'recognition_complete',
-                  filename: filename,
-                  recognition: recognitionResult
-              };
-              wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionCompleteMessage));
-              });
-          }).catch(recogErr => console.error(`[Recognition BG] Error for ${filename}:`, recogErr));
-
-          res.status(200).json({ message: 'Frame received, recognition started.' });
-        } catch (procErr) {
-          console.error('[Stream API] Error processing raw frame:', procErr);
-          res.status(500).json({ error: 'Failed to process raw frame', details: procErr.message });
-        }
-      });
-    
-    // --- BRANCH 2: JPEG IMAGE (MULTIPART) ---
-    } else if (contentType && contentType.startsWith('multipart/form-data')) {
-      // Add debug logging for upload request
-      console.debug('[Stream API] Multipart upload request received', {
-        deviceId,
-        contentType,
-        contentLength: req.headers['content-length'],
-        timestamp: Date.now()
-      });
-
-      streamMultipartUpload(req, res, async (uploadErr) => {
-        if (uploadErr) {
-          console.error('[Stream API] Multipart upload error:', uploadErr);
-          return res.status(400).json({
-            error: 'Invalid multipart request',
-            details: uploadErr.message
-          });
-        }
-        
-        // Validate required 'image' field
-        if (!req.file || !req.file.buffer) {
-          console.warn('[Stream API] Missing image field in multipart request');
-          return res.status(400).json({
-            error: 'Missing required field: image',
-            details: 'The multipart request must contain an image file'
-          });
-        }
-
-        const timestamp = Date.now();
-        const filename = `${deviceId}_${timestamp}.jpg`;
-        const filePath = path.join(dataDir, filename);
-
-        try {
-          // Add debug logging for file processing
-          console.debug('[Stream API] Processing uploaded image', {
-            filename,
-            size: req.file.buffer.length,
-            mimeType: req.file.mimetype
-          });
-
-          await fsp.writeFile(filePath, req.file.buffer);
-          
-          // Broadcast new frame message
-          const newFrameMessage = {
-            type: 'new_frame',
-            deviceId, timestamp, filename,
-            url: `/data/${filename}`,
-            recognition: { status: 'pending' }
-          };
-          wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(newFrameMessage));
-          });
-
-          // Handle face recognition in background
-          dataStore.performFaceRecognition(req.file.buffer)
-            .then(recognitionResult => {
-              const recognitionCompleteMessage = {
-                type: 'recognition_complete',
-                filename: filename,
-                recognition: recognitionResult
-              };
-              wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionCompleteMessage));
-              });
-            })
-            .catch(recogErr => {
-              console.error(`[Recognition BG - Multipart] Error for ${filename}:`, recogErr);
-              // Broadcast recognition failure
-              const recognitionFailedMessage = {
-                type: 'recognition_failed',
-                filename: filename,
-                error: recogErr.message
-              };
-              wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionFailedMessage));
-              });
-            });
-
-          res.json({
-            success: true,
-            message: 'JPEG frame received, recognition started.',
-            filename,
-            timestamp,
-            size: req.file.buffer.length
-          });
-        } catch (procErr) {
-          console.error('[Stream API] Error processing JPEG frame:', procErr);
-          // Broadcast processing failure
-          const processingFailedMessage = {
-            type: 'processing_failed',
-            filename: filename,
-            error: procErr.message
-          };
-          wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(processingFailedMessage));
-          });
-          
-          res.status(500).json({
-            success: false,
-            error: 'Failed to process JPEG frame',
-            details: procErr.message,
-            timestamp
-          });
-        }
-      });
-    
-    // --- BRANCH 3: UNSUPPORTED ---
-    } else {
-      res.status(400).json({ error: 'Unsupported content type. Use application/octet-stream or multipart/form-data.' });
     }
   });
 

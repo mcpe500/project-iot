@@ -1,7 +1,6 @@
 /*
  * ESP32 CAM OV2640 Camera Streaming
- * Merged from iot_camera_stream modular files
- * Modified for ESP32 CAM with OV2640
+ * Simplified to send a single HTTP POST request per frame.
  */
 
 #include <WiFi.h>
@@ -16,20 +15,15 @@
 #define WIFI_SSID "weef1"
 #define WIFI_PASSWORD "1234567899"
 
-// Server Configuration  
+// Server Configuration
 #define SERVER_HOST "203.175.11.145"
-#define SERVER_PORT 9003
+#define SERVER_PORT 9004
 #define SERVER_PATH "/api/v1/stream/stream"
-#define SERVER_URL "http://" SERVER_HOST ":" "9003" SERVER_PATH
+#define SERVER_URL "http://" SERVER_HOST ":" "9004" SERVER_PATH
 #define API_KEY "dev-api-key-change-in-production"
 #define DEVICE_ID "ESP32-CAM-001"
 
-// Chunk Configuration
-#define CHUNK_SIZE 2048  // 2KB chunks
-#define MAX_RETRIES 5
-#define INITIAL_RETRY_DELAY 500  // 0.5s initial delay
-
-// ESP32 CAM Pin Configuration for OV2640
+// ESP32 CAM Pin Configuration for AI-Thinker OV2640
 #define PWDN_GPIO_NUM    32
 #define RESET_GPIO_NUM   -1
 #define XCLK_GPIO_NUM     0
@@ -39,7 +33,7 @@
 #define Y9_GPIO_NUM      35
 #define Y8_GPIO_NUM      34
 #define Y7_GPIO_NUM      39
-#define Y8_GPIO_NUM      36
+#define Y6_GPIO_NUM      36
 #define Y5_GPIO_NUM      21
 #define Y4_GPIO_NUM      19
 #define Y3_GPIO_NUM      18
@@ -51,7 +45,7 @@
 // Performance Configuration
 #define TARGET_FPS 10
 #define FRAME_INTERVAL_MS (1000 / TARGET_FPS)
-#define HTTP_TIMEOUT_MS 3000
+#define HTTP_TIMEOUT_MS 5000 // Increased timeout for single large upload
 
 // Global variables
 WiFiClient client;
@@ -63,7 +57,6 @@ uint32_t dropCount = 0;
 // ===========================
 // Camera Initialization
 // ===========================
-
 void initCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -85,174 +78,91 @@ void initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  
-  // OV2640 specific configuration
   config.frame_size = FRAMESIZE_VGA;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.jpeg_quality = 10;
+  config.jpeg_quality = 12; // Quality can be slightly higher now
   config.fb_count = 1;
 
-  if(psramFound()){
-    config.jpeg_quality = 6;
+  if (psramFound()) {
+    config.jpeg_quality = 10;
     config.fb_count = 2;
   }
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed: 0x%x", err);
+    Serial.printf("Camera init failed: 0x%x\n", err);
     ESP.restart();
   }
 
-  // Configure sensor settings
   sensor_t * s = esp_camera_sensor_get();
   s->set_framesize(s, FRAMESIZE_VGA);
-  s->set_quality(s, 10);
 }
 
 // ===========================
 // WiFi Management
 // ===========================
-
 void initWiFi() {
   Serial.println("Initializing WiFi...");
-  
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   WiFi.setSleep(false);
-
   int retryCount = 0;
-  int maxRetries = 50;  // Increased from 30
-  int retryDelay = 2000; // Increased from 1000
-  
-  while (WiFi.status() != WL_CONNECTED && retryCount < maxRetries) {
-    Serial.printf("Connection attempt %d/%d...\n", retryCount + 1, maxRetries);
-    delay(retryDelay);
+  while (WiFi.status() != WL_CONNECTED && retryCount < 50) {
+    Serial.printf("Connection attempt %d/50...\n", retryCount + 1);
+    delay(1000);
     retryCount++;
   }
-
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("WiFi connected");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("WiFi connection failed");
-    Serial.println("Retrying in 5 seconds...");
+    Serial.println("WiFi connection failed. Restarting...");
     delay(5000);
     ESP.restart();
   }
 }
 
-// ===========================
-// Chunked Upload Implementation
-// ===========================
-
-bool sendChunkedFrame(camera_fb_t* fb) {
+// =========================================================
+// Frame Capture and Upload (SIMPLIFIED AND CORRECTED)
+// =========================================================
+bool sendFrameToServer(camera_fb_t* fb) {
   if (!fb || fb->len == 0) {
     Serial.println("Invalid frame buffer");
     return false;
   }
 
-  // Initialize HTTP client
   HTTPClient http;
   if (!http.begin(client, SERVER_URL)) {
     Serial.println("HTTP client initialization failed");
     return false;
   }
 
-  // Add standard headers
-  http.addHeader("X-API-Key", API_KEY);
+  // Set standard headers
+  // CRITICAL FIX: Set the Content-Type so the server knows it's a JPEG image
+  http.addHeader("Content-Type", "image/jpeg");
   http.addHeader("Device-ID", DEVICE_ID);
+  http.addHeader("X-API-Key", API_KEY);
   http.setTimeout(HTTP_TIMEOUT_MS);
-  http.setReuse(true);
 
-  // Calculate total chunks
-  uint16_t totalChunks = (fb->len / CHUNK_SIZE) + ((fb->len % CHUNK_SIZE) ? 1 : 0);
-  uint32_t crc32 = crc32_le(0, fb->buf, fb->len);
-  
-  // Send chunks with exponential backoff
-  for (uint16_t chunkNum = 0; chunkNum < totalChunks; chunkNum++) {
-    size_t chunkStart = chunkNum * CHUNK_SIZE;
-    size_t chunkSize = min(CHUNK_SIZE, fb->len - chunkStart);
-    
-    // Create chunk header
-    String header = "CHUNK|" + String(chunkNum) + "|" + String(totalChunks) + "|" + String(crc32) + "|";
-    
-    // Calculate content length for this chunk
-    size_t contentLength = header.length() + chunkSize + 2; // +2 for \r\n
-    
-    // Set content length header
-    http.addHeader("Content-Length", String(contentLength));
-    
-    // Start POST
-    int httpCode = http.POST((uint8_t*)NULL, 0);
-    if (httpCode <= 0) {
-      // Exponential backoff retry logic
-      int retryCount = 0;
-      int retryDelay = INITIAL_RETRY_DELAY;
-      
-      while (retryCount < MAX_RETRIES) {
-        delay(retryDelay);
-        httpCode = http.POST((uint8_t*)NULL, 0);
-        if (httpCode > 0) break;
-        
-        retryCount++;
-        retryDelay *= 2; // Exponential backoff
-        Serial.printf("Retry %d/%d, delay: %dms\n", retryCount, MAX_RETRIES, retryDelay);
-      }
-      
-      if (httpCode <= 0) {
-        Serial.println("Failed to start chunk upload");
-        http.end();
-        return false;
-      }
-    }
-    
-    // Write chunk data
-    WiFiClient * stream = http.getStreamPtr();
-    if (!stream) {
-      Serial.println("Failed to get HTTP stream");
-      http.end();
-      return false;
-    }
+  // Send the entire frame buffer in one POST request.
+  // The library handles the chunking and Content-Length internally.
+  int httpCode = http.POST(fb->buf, fb->len);
 
-    // Write header
-    if (!stream->print(header)) {
-      Serial.println("Failed to write chunk header");
-      http.end();
-      return false;
+  // Check the result
+  bool success = false;
+  if (httpCode > 0) {
+    Serial.printf("[HTTP] POST... code: %d\n", httpCode);
+    if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_ACCEPTED) {
+      String payload = http.getString();
+      Serial.println(payload);
+      success = true;
     }
-
-    // Write chunk data
-    size_t written = stream->write(fb->buf + chunkStart, chunkSize);
-    if (written != chunkSize) {
-      Serial.printf("Chunk write failed: %d/%d bytes\n", written, chunkSize);
-      http.end();
-      return false;
-    }
-
-    // Write footer
-    if (!stream->print("\r\n")) {
-      Serial.println("Failed to write chunk footer");
-      http.end();
-      return false;
-    }
+  } else {
+    Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
   }
 
   http.end();
-  return true;
-}
-
-// ===========================
-// Frame Capture and Upload
-// ===========================
-
-bool sendFrameToServer(camera_fb_t* fb) {
-  // Fallback to original implementation if chunked upload fails
-  if (!sendChunkedFrame(fb)) {
-    Serial.println("Chunked upload failed, falling back to original method");
-    // Original multipart form upload implementation here
-    // (Keep original implementation for backward compatibility)
-  }
-  return true;
+  return success;
 }
 
 void captureAndSendFrame() {
@@ -263,44 +173,37 @@ void captureAndSendFrame() {
     return;
   }
 
-  bool success = sendFrameToServer(fb);
-  if (success) {
+  // The function now directly sends the frame
+  if (sendFrameToServer(fb)) {
     successCount++;
   } else {
     dropCount++;
   }
 
-  esp_camera_fb_return(fb);
+  esp_camera_fb_return(fb); // IMPORTANT: Always return the frame buffer!
 }
 
 // ===========================
 // Main Program
 // ===========================
-
 void setup() {
   Serial.begin(115200);
-  
-  // Initialize subsystems
   initWiFi();
   initCamera();
-  
-  Serial.println("Setup complete");
+  Serial.println("Setup complete. Starting image capture loop...");
 }
 
 void loop() {
   unsigned long currentTime = millis();
-  
   if (currentTime - lastFrameTime >= FRAME_INTERVAL_MS) {
-    captureAndSendFrame();
     lastFrameTime = currentTime;
-    
+    captureAndSendFrame();
+
     if (frameCount % 10 == 0) {
-      Serial.printf("Frames: %d, Success: %d, Dropped: %d\n", 
+      Serial.printf("Frames: %d, Success: %d, Dropped: %d\n",
                    frameCount, successCount, dropCount);
     }
-    
     frameCount++;
   }
-  
-  delay(1);
+  delay(1); // Small delay to prevent watchdog timer issues
 }
