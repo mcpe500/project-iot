@@ -170,15 +170,17 @@ class DatabaseOptimizer {
         }
       });
       return cleaned;
-    });
-
-    const optimizedOptions = {
+    });    const optimizedOptions = {
       ...options,
       benchmark: true,
       logging: false,
-      ignoreDuplicates: options.ignoreDuplicates !== false,
-      updateOnDuplicate: options.updateOnDuplicate || null
+      ignoreDuplicates: options.ignoreDuplicates !== false
     };
+
+    // Only add updateOnDuplicate if it's provided and is a non-empty array
+    if (options.updateOnDuplicate && Array.isArray(options.updateOnDuplicate) && options.updateOnDuplicate.length > 0) {
+      optimizedOptions.updateOnDuplicate = options.updateOnDuplicate;
+    }
 
     // Split into smaller batches for very large operations
     const batchSize = options.batchSize || 1000;
