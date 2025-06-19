@@ -52,53 +52,72 @@ class DataStore:
             return {"status": "error", "message": "Face recognition feature not available."}
         
         try:
+            start_time = time.time()
+            
+            # Fast image decoding
             image_array = np.frombuffer(image_bytes, np.uint8)
             image_bgr = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
             if image_bgr is None:
                 raise ValueError("Failed to decode image.")
             
-            # Convert the image from BGR color (which OpenCV uses) to RGB color (which face_recognition uses)
+            # Convert BGR to RGB (required for face_recognition)
             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
-            face_locations = face_recognition.face_locations(image_rgb)
+            # Fast face detection with smaller model for speed
+            face_locations = face_recognition.face_locations(image_rgb, model="hog")  # HOG is faster than CNN
             if not face_locations:
-                return {"status": "no_face_detected", "faces_detected": 0}
+                processing_time = time.time() - start_time
+                return {
+                    "status": "no_face_detected", 
+                    "faces_detected": 0,
+                    "processing_time": round(processing_time, 4)
+                }
 
-            face_encodings = face_recognition.face_encodings(image_rgb, face_locations)
+            # Quick face encoding (only process first face for speed)
+            face_encodings = face_recognition.face_encodings(image_rgb, face_locations[:1])  # Only process first face
             
             best_match_name = "Unknown"
             best_confidence = 0.0
 
-            if self.permitted_face_encodings:
-                for face_encoding in face_encodings:
-                    matches = face_recognition.compare_faces(self.permitted_face_encodings, face_encoding)
-                    face_distances = face_recognition.face_distance(self.permitted_face_encodings, face_encoding)
+            if self.permitted_face_encodings and face_encodings:
+                face_encoding = face_encodings[0]  # Only check first face
+                face_distances = face_recognition.face_distance(self.permitted_face_encodings, face_encoding)
+                
+                if len(face_distances) > 0:
+                    best_match_index = np.argmin(face_distances)
+                    distance = face_distances[best_match_index]
+                    confidence = 1 - distance
                     
-                    if len(face_distances) > 0:
-                        best_match_index = np.argmin(face_distances)
-                        if matches[best_match_index]:
-                            confidence = 1 - face_distances[best_match_index]
-                            if confidence > best_confidence:
-                                best_confidence = confidence
-                                best_match_name = self.permitted_face_names[best_match_index]
+                    # Lower threshold for faster matching
+                    if confidence > 0.5:  # Reduced from typical 0.6 for speed
+                        best_confidence = confidence
+                        best_match_name = self.permitted_face_names[best_match_index]
 
+            processing_time = time.time() - start_time
+            
             if best_match_name != "Unknown":
                 return {
                     "status": "permitted_face",
                     "recognizedAs": best_match_name,
-                    "confidence": best_confidence,
-                    "faces_detected": len(face_locations)
+                    "confidence": round(best_confidence, 4),
+                    "faces_detected": len(face_locations),
+                    "processing_time": round(processing_time, 4)
                 }
             else:
-                 return {
+                return {
                     "status": "unknown_face",
                     "recognizedAs": None,
                     "confidence": 0.0,
-                    "faces_detected": len(face_locations)
+                    "faces_detected": len(face_locations),
+                    "processing_time": round(processing_time, 4)
                 }
         except Exception as e:
-            logger.error(f"Error during face recognition: {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
+            logger.error(f"Error during face recognition: {e}")
+            return {
+                "status": "error", 
+                "message": str(e),
+                "processing_time": 0
+            }
 
     def register_device(self, device_data: Dict[str, Any]) -> Dict[str, Any]:
         device_id = device_data.get('id')

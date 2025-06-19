@@ -49,7 +49,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="IoT Backend GPU Server",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Optimize for high throughput
+    docs_url="/docs" if config.RELOAD_DEBUG else None,
+    redoc_url="/redoc" if config.RELOAD_DEBUG else None
 )
 
 # --- Global Exception Handler ---
@@ -86,11 +89,14 @@ if __name__ == "__main__":
         logger.critical("Uvicorn is not installed. Please run: pip install uvicorn[standard]")
         sys.exit(1)
         
-    logger.info(f"Starting server on {config.HOST}:{config.PORT}")
+    logger.info(f"Starting high-performance server on {config.HOST}:{config.PORT}")
     config.uvicorn.run(
         "main:app",
         host=config.HOST,
         port=config.PORT,
         reload=config.RELOAD_DEBUG,
-        log_level=config.UVICORN_LOG_LEVEL.lower()
+        log_level=config.UVICORN_LOG_LEVEL.lower(),
+        workers=1,  # Single worker for GPU tasks
+        access_log=False,  # Disable access logs for performance
+        use_colors=False if not config.RELOAD_DEBUG else True
     )

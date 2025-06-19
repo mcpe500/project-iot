@@ -256,4 +256,11 @@ export const getBuzzerStatus = async (deviceId: string): Promise<BuzzerStatus> =
   return api.get(`/api/v1/buzzer/status?deviceId=${encodeURIComponent(deviceId)}`);
 };
 
+export const pingBuzzer = async (deviceId: string): Promise<BuzzerStatus> => {
+  if (!deviceId) {
+    throw new Error('Device ID is required');
+  }
+  return api.post('/api/v1/buzzer/ping', { deviceId });
+};
+
 export default api;

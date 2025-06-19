@@ -5,7 +5,6 @@ import { CameraView, useCameraPermissions, CameraType } from 'expo-camera';
 import { useFocusEffect } from '@react-navigation/native';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { ENV_CONFIG, getWebSocketUrl } from '../../services/config';
-import { requestBuzzer, getBuzzerStatus } from '@/services/api';
 
 const MAX_FPS = 10;
 const FRAME_INTERVAL_MS = 1000 / MAX_FPS;
@@ -31,41 +30,15 @@ export default function LiveStreamScreen() {
   const [currentImageUrl, setCurrentImageUrl] = useState<string | null>(null);
   const [nextImageUrl, setNextImageUrl] = useState<string | null>(null);
   const [imageLoaded, setImageLoaded] = useState(false);
-  const [isSendingStream, setIsSendingStream] = useState(false);
   const [isRecordLoading, setIsRecordLoading] = useState(false);
   const [isAddingFace, setIsAddingFace] = useState(false);
   const [faceName, setFaceName] = useState('');
   const [showAddFaceModal, setShowAddFaceModal] = useState(false);
 
-  // Buzzer control state
-  const [selectedDevice, setSelectedDevice] = useState<string | null>('esp32-device-1');
-  const [buzzerStatus, setBuzzerStatus] = useState(false);
-  const [isBuzzerLoading, setIsBuzzerLoading] = useState(false);
-
-  // Buzzer control handler
-  const handleBuzzerControl = async (action: 'on' | 'off') => {
-    if (!selectedDevice) {
-      Alert.alert('Error', 'No device selected');
-      return;
-    }
-
-    setIsBuzzerLoading(true);
-    try {
-      await requestBuzzer(selectedDevice, action === 'on');
-      setBuzzerStatus(action === 'on');
-      Alert.alert('Success', `Buzzer turned ${action}`);
-    } catch (error) {
-      console.error('Buzzer control error:', error);
-      Alert.alert('Error', 'Failed to control buzzer');
-    } finally {
-      setIsBuzzerLoading(false);
-    }
-  };
 
   const wsRef = useRef<WebSocket | null>(null);
   const frameCountRef = useRef(0);
   const lastFpsCalcTimeRef = useRef(Date.now());
-  const streamIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const connectWebSocket = useCallback(() => {
@@ -138,9 +111,6 @@ export default function LiveStreamScreen() {
     socket.onclose = () => {
       console.log('WebSocket disconnected');
       setIsConnected(false);
-      if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-      streamIntervalRef.current = null;
-      setIsSendingStream(false);
       if (!reconnectTimeoutRef.current) {
         reconnectTimeoutRef.current = setTimeout(connectWebSocket, RECONNECT_DELAY_MS);
       }
@@ -160,9 +130,6 @@ export default function LiveStreamScreen() {
           wsRef.current = null;
         }
         setIsConnected(false);
-        if (streamIntervalRef.current) clearInterval(streamIntervalRef.current);
-        streamIntervalRef.current = null;
-        setIsSendingStream(false);
       };
     }, [connectWebSocket])
   );
@@ -179,80 +146,6 @@ export default function LiveStreamScreen() {
     }, 1000);
     return () => clearInterval(fpsInterval);
   }, []);
-
-  const captureAndSendFrame = async () => {
-    if (cameraRef.current && isConnected) {
-      try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.5, base64: false });
-        if (photo?.uri) {
-          const formData = new FormData();
-          formData.append('image', {
-            uri: photo.uri,
-            name: `frame_${Date.now()}.jpg`,
-            type: 'image/jpeg',
-          } as any);
-          formData.append('deviceId', 'mobile-app-camera');
-
-          fetch(`${ENV_CONFIG.BACKEND_URL}/api/v1/stream/stream`, {
-            method: 'POST',
-            body: formData,
-          }).catch(error => console.error('Error sending frame:', error));
-        }
-      } catch (error) {
-        console.error('Error taking picture:', error);
-      }
-    }
-  };
-
-  const toggleStreaming = () => {
-    if (!isConnected) {
-      Alert.alert("Not Connected", "Cannot start/stop camera stream.");
-      return;
-    }
-    const currentlySending = !!streamIntervalRef.current;
-    if (currentlySending) {
-      clearInterval(streamIntervalRef.current!);
-      streamIntervalRef.current = null;
-    } else {
-      streamIntervalRef.current = setInterval(captureAndSendFrame, FRAME_INTERVAL_MS);
-    }
-    setIsSendingStream(!currentlySending);
-  };
-
-  // Fetch buzzer status when device changes
-  useEffect(() => {
-    if (selectedDevice) {
-      setIsBuzzerLoading(true);
-      getBuzzerStatus(selectedDevice)
-        .then(response => {
-          setBuzzerStatus(response.status);
-        })
-        .catch(error => {
-          console.error('Error fetching buzzer status:', error);
-          Alert.alert('Error', 'Failed to fetch buzzer status');
-        })
-        .finally(() => setIsBuzzerLoading(false));
-    }
-  }, [selectedDevice]);
-
-  const handleBuzzerToggle = async () => {
-    if (!selectedDevice) {
-      Alert.alert('Error', 'Please select a device first');
-      return;
-    }
-
-    setIsBuzzerLoading(true);
-    try {
-      const newStatus = !buzzerStatus;
-      await requestBuzzer(selectedDevice, newStatus);
-      setBuzzerStatus(newStatus);
-    } catch (error) {
-      console.error('Error toggling buzzer:', error);
-      Alert.alert('Error', 'Failed to toggle buzzer');
-    } finally {
-      setIsBuzzerLoading(false);
-    }
-  };
 
   const handleAddPermittedFace = async () => {
     if (!cameraRef.current) {
@@ -329,10 +222,6 @@ export default function LiveStreamScreen() {
     );
   }
 
-  function toggleCameraFacing() {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
-  }
-
   const getRecognitionStyle = (status?: string) => {
     switch (status) {
       case 'permitted_face': return styles.recognitionPermitted;
@@ -385,9 +274,7 @@ export default function LiveStreamScreen() {
         </View>
       ) : (
         <View style={styles.streamContainer}>
-          {isSendingStream ? (
-            <CameraView style={styles.streamImage} facing={facing} ref={cameraRef} mode="picture" />
-          ) : currentImageUrl ? (
+          {currentImageUrl ? (
             <View style={styles.imageContainer}>
               <Image
                 source={{ uri: currentImageUrl }}
@@ -411,7 +298,7 @@ export default function LiveStreamScreen() {
             <View style={styles.noStreamContainer}>
               <ActivityIndicator size="large" color="#aaa" />
               <Text style={styles.noStreamText}>
-                {isConnected ? "Waiting for stream..." : "Connecting..."}
+                {isConnected ? "Waiting for ESP32-CAM stream..." : "Connecting..."}
               </Text>
             </View>
           )}
@@ -425,64 +312,31 @@ export default function LiveStreamScreen() {
             <Text style={styles.statsText}>Status: {isConnected ? 'Connected' : 'Disconnected'}</Text>
             <Text style={styles.statsText}>Last Frame: {lastFrameTime ? new Date(lastFrameTime).toLocaleTimeString() : 'N/A'}</Text>
           </View>
-          {lastFrame?.recognition && !isSendingStream && (
+          {lastFrame?.recognition && (
             <View style={[styles.recognitionStatus, getRecognitionStyle(lastFrame.recognition.status)]}>
               <Text style={styles.recognitionText}>{getRecognitionText(lastFrame.recognition)}</Text>
             </View>
           )}
 
-          <View style={styles.buttonRow}>
-            <TouchableOpacity onPress={toggleCameraFacing} style={styles.controlButton} disabled={!isSendingStream}>
-              <Ionicons name="camera-reverse-outline" size={28} color={isSendingStream ? "#007AFF" : "#aaa"} />
-              <Text style={[styles.controlButtonText, !isSendingStream && { color: "#aaa" }]}>Flip</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={toggleStreaming} style={styles.controlButton} disabled={!isConnected}>
-              <Ionicons name={isSendingStream ? "stop-circle-outline" : "play-circle-outline"} size={28} color={!isConnected ? "#aaa" : isSendingStream ? "#FF3B30" : "#34C759"} />
-              <Text style={[styles.controlButtonText, { color: !isConnected ? "#aaa" : isSendingStream ? "#FF3B30" : "#34C759" }]}>
-                {isSendingStream ? "Stop Cam" : "Start Cam"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           <TouchableOpacity
             onPress={saveRecording}
-            style={[styles.button, styles.recordButton, (!isConnected || isSendingStream) && styles.buttonDisabled]}
-            disabled={isRecordLoading || !isConnected || isSendingStream}
+            style={[styles.button, styles.recordButton, !isConnected && styles.buttonDisabled]}
+            disabled={isRecordLoading || !isConnected}
           >
             <MaterialCommunityIcons name="record-rec" size={24} color="white" />
-            <Text style={styles.buttonText}>Record Last 30s</Text>
+            <Text style={styles.buttonText}>
+              {isRecordLoading ? "Recording..." : "Record Last 30s"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={() => setShowAddFaceModal(true)}
-            style={[styles.button, isSendingStream && styles.buttonDisabled]}
-            disabled={isSendingStream}
+            style={styles.button}
           >
             <MaterialCommunityIcons name="face-recognition" size={24} color="white" />
             <Text style={styles.buttonText}>Add Permitted Face</Text>
           </TouchableOpacity>
 
-          <View style={styles.buzzerControlContainer}>
-            <Text style={styles.buzzerStatusText}>
-              Buzzer Status: {buzzerStatus ? 'ON' : 'OFF'}
-            </Text>
-            <View style={styles.buzzerButtonRow}>
-              <TouchableOpacity
-                style={[styles.buzzerButton, styles.buzzerOnButton]}
-                onPress={() => handleBuzzerControl('on')}
-                disabled={isBuzzerLoading || buzzerStatus}
-              >
-                <Text style={styles.buzzerButtonText}>Turn On</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.buzzerButton, styles.buzzerOffButton]}
-                onPress={() => handleBuzzerControl('off')}
-                disabled={isBuzzerLoading || !buzzerStatus}
-              >
-                <Text style={styles.buzzerButtonText}>Turn Off</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         </ScrollView>
       )}
     </View>

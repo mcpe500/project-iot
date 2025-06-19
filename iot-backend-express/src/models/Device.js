@@ -36,17 +36,20 @@ module.exports = (sequelize) => {
     },
     uptime: {
       type: DataTypes.BIGINT,
-      allowNull: true,
+      allowNull: false,
+      defaultValue: 0,
       comment: 'Device uptime in milliseconds'
     },
     freeHeap: {
       type: DataTypes.INTEGER,
-      allowNull: true,
+      allowNull: false,
+      defaultValue: 0,
       comment: 'Free heap memory in bytes'
     },
     wifiRssi: {
       type: DataTypes.INTEGER,
-      allowNull: true,
+      allowNull: false,
+      defaultValue: 0,
       comment: 'WiFi signal strength in dBm'
     },
     capabilities: {
