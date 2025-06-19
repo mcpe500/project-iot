@@ -15,6 +15,41 @@ const permittedFaceUpload = multer({ storage: multer.memoryStorage() });
 const streamMultipartUpload = multer({ storage: multer.memoryStorage() }).single('image');
 
 function setupRoutes(app, dataStore, wss) {
+  // Buzzer control endpoint
+  app.post('/api/v1/buzzer/control', async (req, res) => {
+    try {
+      const { deviceId, status } = req.body;
+      
+      if (!deviceId || typeof status !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid request parameters'
+        });
+      }
+
+      // Create new buzzer request
+      const buzzerRequest = new BuzzerRequest({
+        deviceId,
+        status,
+        timestamp: new Date()
+      });
+
+      await buzzerRequest.save();
+
+      // TODO: Implement actual device control logic here
+
+      res.json({
+        success: true,
+        message: `Buzzer ${status ? 'activated' : 'deactivated'}`
+      });
+    } catch (error) {
+      console.error('Buzzer control error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Internal server error'
+      });
+    }
+  });
   // Health check
   app.get('/health', async (req, res) => {
     try {
@@ -94,6 +129,46 @@ function setupRoutes(app, dataStore, wss) {
     } catch (error) {
       console.error('[API Error] /devices/heartbeat:', error);
       res.status(500).json({ error: 'Failed to process heartbeat', details: error.message });
+    }
+  });
+
+  // --- BUZZER CONTROL ENDPOINTS ---
+  app.post('/api/v1/buzzer/request', async (req, res) => {
+    const { deviceId } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({ error: 'Device ID is required' });
+    }
+    
+    try {
+      const request = await dataStore.createBuzzerRequest(deviceId);
+      res.json(request);
+    } catch (error) {
+      console.error('[API Error] /buzzer/request:', error);
+      res.status(500).json({ error: 'Failed to create buzzer request', details: error.message });
+    }
+  });
+
+  app.get('/api/v1/buzzer/status/:deviceId', async (req, res) => {
+    const { deviceId } = req.params;
+    
+    try {
+      const status = await dataStore.getBuzzerStatus(deviceId);
+      res.json(status);
+    } catch (error) {
+      console.error('[API Error] /buzzer/status:', error);
+      res.status(500).json({ error: 'Failed to get buzzer status', details: error.message });
+    }
+  });
+
+  app.patch('/api/v1/buzzer/complete/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+      const request = await dataStore.completeBuzzerRequest(id);
+      res.json(request);
+    } catch (error) {
+      console.error('[API Error] /buzzer/complete:', error);
+      res.status(500).json({ error: 'Failed to complete buzzer request', details: error.message });
     }
   });
 

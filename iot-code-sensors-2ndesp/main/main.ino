@@ -2,6 +2,7 @@
 // WITH IoT Backend Integration using .env configuration
 
 // --- LIBRARIES ---
+#include <Ticker.h>
 #include <Preferences.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -10,6 +11,7 @@
 
 // --- HARDWARE PIN DEFINITIONS ---
 #define BUZZER_PIN 25
+#define BUZZER_POLL_INTERVAL 150  // Poll every 150ms
 #define TRIG_PIN 19
 #define ECHO_PIN 18
 #define DHT_PIN 23
@@ -71,7 +73,12 @@ const unsigned long sendInterval = 1000;   // Send data every 250 miliseconds
 bool deviceRegistered = false;
 
 // Buzzer enable/disable flag (set to false to mute buzzer)
-bool buzzerEnabled = false;
+bool buzzerEnabled = true;
+
+// Buzzer control variables
+bool buzzerActive = false;
+String buzzerRequestId = "";
+unsigned long lastBuzzerPoll = 0;
 
 // Global sensor variables for backend sending
 float distance = 0.0;
@@ -80,6 +87,9 @@ float humidity = 0.0;
 int lightLevel = 0;
 
 // --- FUNCTION PROTOTYPES (Forward Declarations) ---
+void pollBuzzerStatus();
+void activateBuzzer(String requestId);
+void deactivateBuzzer();
 void loadConfig();
 void saveConfig();
 void checkForConfigUpdate();
@@ -125,6 +135,12 @@ void setup() {
 // =================================================================
 void loop() {
   unsigned long currentMillis = millis();
+  
+  // Handle buzzer status polling
+  if (currentMillis - lastBuzzerPoll >= BUZZER_POLL_INTERVAL) {
+    pollBuzzerStatus();
+    lastBuzzerPoll = currentMillis;
+  }
   
   // Handle configuration updates via Serial
   checkForConfigUpdate();
@@ -348,6 +364,85 @@ float readDistanceSensor() {
   
   // Calculate distance in cm (speed of sound = 0.034 cm/µs)
   return duration * 0.034 / 2;
+}
+
+// --- Buzzer Control Functions ---
+void pollBuzzerStatus() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  HTTPClient http;
+  String url = "http://" + String(config.serverIp) + ":" + String(config.serverPort) +
+               "/api/v1/buzzer/status/" + String(config.deviceId);
+  http.begin(url);
+  
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    JsonDocument doc;
+    deserializeJson(doc, payload);
+    
+    String status = doc["status"];
+    String requestId = doc["requestId"];
+    
+    if (status == "pending" && !buzzerActive) {
+      activateBuzzer(requestId);
+    } else if (status != "pending" && buzzerActive) {
+      deactivateBuzzer();
+    }
+  } else {
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print("] Buzzer status polling failed. Error: ");
+    Serial.println(http.errorToString(httpCode).c_str());
+  }
+  http.end();
+}
+
+void activateBuzzer(String requestId) {
+  buzzerActive = true;
+  buzzerRequestId = requestId;
+  digitalWrite(BUZZER_PIN, HIGH);
+  
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.print("] Buzzer activated for request: ");
+  Serial.println(requestId);
+  
+  // Send completion notification
+  HTTPClient http;
+  String url = "http://" + String(config.serverIp) + ":" + String(config.serverPort) +
+               "/api/v1/buzzer/complete/" + requestId;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  
+  JsonDocument doc;
+  doc["completedAt"] = millis();
+  String jsonPayload;
+  serializeJson(doc, jsonPayload);
+  
+  int httpCode = http.PATCH(jsonPayload);
+  if (httpCode > 0) {
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print("] Buzzer completion sent. Response: ");
+    Serial.println(httpCode);
+  } else {
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print("] Buzzer completion failed. Error: ");
+    Serial.println(http.errorToString(httpCode).c_str());
+  }
+  http.end();
+}
+
+void deactivateBuzzer() {
+  buzzerActive = false;
+  buzzerRequestId = "";
+  digitalWrite(BUZZER_PIN, LOW);
+  
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.println("] Buzzer deactivated");
 }
 
 // --- Network Functions ---

@@ -23,6 +23,7 @@ let sequelize = new Sequelize(dbName, dbUser, dbPassword, {
 // Import models (functions, not instances)
 const DeviceModel = require('./models/Device');
 const SensorDataModel = require('./models/SensorData');
+const BuzzerRequestModel = require('./models/BuzzerRequest');
 
 async function createDatabaseIfNotExists() {
   const connection = await mysql.createConnection({
@@ -66,6 +67,7 @@ async function initializeDatabase() {
   // Initialize models with the (possibly new) sequelize instance
   const Device = DeviceModel(sequelize);
   const SensorData = SensorDataModel(sequelize);
+  const BuzzerRequest = BuzzerRequestModel(sequelize);
 
 
   // Try to sync models gracefully
@@ -79,6 +81,8 @@ async function initializeDatabase() {
       console.log('✅ Device model synchronized.');
       await SensorData.sync({ alter: false, force: false });
       console.log('✅ SensorData model synchronized.');
+      await BuzzerRequest.sync({ alter: false, force: false });
+      console.log('✅ BuzzerRequest model synchronized.');
     } catch (individualSyncError) {
       console.warn('⚠️  Individual sync also failed, continuing without sync...');
       console.warn('Database tables may need manual creation.');
@@ -114,5 +118,6 @@ module.exports = {
   sequelize,
   Device: DeviceModel(sequelize),
   SensorData: SensorDataModel(sequelize),
+  BuzzerRequest: BuzzerRequestModel(sequelize),
   initializeDatabase
 };
