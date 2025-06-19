@@ -54,23 +54,30 @@ wss.on('connection', (ws) => {
 let server; // Declare server variable in module scope
 
 (async () => {  try {
-    // Initialize database first
-    const sequelize = await initializeDatabase();
-    const dbStatus = await sequelize.verifyConnection();
+    let dbStatus = { success: true, version: 'N/A' };
     
-    if (!dbStatus.success) {
-      console.error('❌ Fatal: Database connection failed. Exiting...');
-      process.exit(1);
+    // Check if database should be used
+    if (process.env.USEDB !== 'false') {
+      console.log('⚙️  Initializing database...');
+      const sequelize = await initializeDatabase();
+      dbStatus = await sequelize.verifyConnection();
+      
+      if (!dbStatus.success) {
+        console.error('❌ Fatal: Database connection failed. Exiting...');
+        process.exit(1);
+      }
+      console.log('✅ Database verified');
+    } else {
+      console.log('ℹ️  Database initialization skipped (USEDB=false)');
     }
     
-    console.log('✅ Database verified, starting server...');
-    
-    // Setup routes with dependencies after database is ready
+    console.log('🚀 Starting server...');
+    // Setup routes with dependencies
     setupRoutes(app, dataStore, wss);
     
-    // Start server after database is ready
+    // Start server
     server = app.listen(port, () => {
-      console.log(`🚀 IoT Backend running on port ${port}`);
+      console.log(`🌐 IoT Backend running on port ${port}`);
       console.log(`📊 Database: ${dbStatus.version}`);
     });
     

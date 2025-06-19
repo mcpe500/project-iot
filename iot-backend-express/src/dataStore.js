@@ -35,13 +35,21 @@ function cleanupOldRecordings(directory, maxAgeMs) {
 
 class DataStore {
   constructor() {
-    console.log('📦 DataStore initialized. Database connection pending...');
-    this.sequelize = null; // Will be set when database is ready
+    console.log('📦 DataStore initialized.');
+    this.USEDB = process.env.USEDB !== 'false';
+    this.sequelize = null;
     this.Device = Device;
     this.SensorData = SensorData;
-    this.dbReady = this.initializeDatabase();
-    this.initializeCleanup();
     this.BuzzerRequest = BuzzerRequest;
+    
+    if (this.USEDB) {
+      console.log('Database connection pending...');
+      this.dbReady = this.initializeDatabase();
+      this.initializeCleanup();
+    } else {
+      console.log('Database operations disabled (USEDB=false). Using stub methods.');
+      this.dbReady = Promise.resolve();
+    }
   }
 
   async initializeDatabase() {
@@ -74,7 +82,11 @@ class DataStore {
 
   // --- DEVICE OPERATIONS (DATABASE) ---
   async registerDevice(device) {
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: registerDevice called (USEDB=false)');
+      return { ...device, lastSeen: Date.now() };
+    }
     
     const deviceData = {
       id: device.id,
@@ -96,14 +108,22 @@ class DataStore {
   }
 
   async getDevice(deviceId) {
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: getDevice called (USEDB=false)');
+      return null;
+    }
     return await this.Device.findOne({
       where: { id: deviceId }
     });
   }
 
   async getAllDevices() {
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: getAllDevices called (USEDB=false)');
+      return [];
+    }
     return await this.Device.findAll({
       order: [['lastSeen', 'DESC']]
     });
@@ -111,7 +131,11 @@ class DataStore {
 
   async updateDevice(deviceId, updates) {
     if (!deviceId) return null;
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: updateDevice called (USEDB=false)');
+      return { id: deviceId, ...updates, lastSeen: Date.now() };
+    }
     
     const updateData = { ...updates, lastSeen: Date.now() };
     await this.Device.update(updateData, {
@@ -123,7 +147,11 @@ class DataStore {
 
   // --- SENSOR DATA OPERATIONS (DATABASE) ---
   async saveSensorData(data) {
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: saveSensorData called (USEDB=false)');
+      return { ...data, timestamp: Date.now() };
+    }
 
     // Upsert device before saving sensor data
     const deviceId = data.deviceId;
@@ -183,7 +211,11 @@ class DataStore {
   }
 
   async getSensorData(deviceId, limit = 100) {
-    await this.dbReady; // Ensure database is ready
+    await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: getSensorData called (USEDB=false)');
+      return [];
+    }
     return await this.SensorData.findAll({
       where: { deviceId },
       order: [['timestamp', 'DESC']],
@@ -194,6 +226,10 @@ class DataStore {
   // --- BUZZER REQUEST OPERATIONS ---
   async createBuzzerRequest(deviceId) {
     await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: createBuzzerRequest called (USEDB=false)');
+      return { deviceId, requestedAt: Date.now(), status: 'pending' };
+    }
     
     if (!deviceId) {
       throw new Error('Device ID is required');
@@ -211,6 +247,10 @@ class DataStore {
 
   async getBuzzerStatus(deviceId) {
     await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: getBuzzerStatus called (USEDB=false)');
+      return { status: 'no_requests' };
+    }
     
     const request = await this.BuzzerRequest.findOne({
       where: { deviceId },
@@ -230,6 +270,10 @@ class DataStore {
 
   async completeBuzzerRequest(requestId) {
     await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: completeBuzzerRequest called (USEDB=false)');
+      return { id: requestId, status: 'completed', buzzedAt: Date.now() };
+    }
     
     const [updated] = await this.BuzzerRequest.update(
       {
@@ -249,6 +293,10 @@ class DataStore {
 
   async getBuzzerRequests(deviceId, limit = 100) {
     await this.dbReady;
+    if (!this.USEDB) {
+      console.log('Stub: getBuzzerRequests called (USEDB=false)');
+      return [];
+    }
     
     return await this.BuzzerRequest.findAll({
       where: { deviceId },

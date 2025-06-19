@@ -326,44 +326,107 @@ function setupRoutes(app, dataStore, wss) {
     
     // --- BRANCH 2: JPEG IMAGE (MULTIPART) ---
     } else if (contentType && contentType.startsWith('multipart/form-data')) {
+      // Add debug logging for upload request
+      console.debug('[Stream API] Multipart upload request received', {
+        deviceId,
+        contentType,
+        contentLength: req.headers['content-length'],
+        timestamp: Date.now()
+      });
+
       streamMultipartUpload(req, res, async (uploadErr) => {
-        if (uploadErr || !req.file) {
-          console.log('[Stream API] Multipart upload error or no file:', uploadErr);
-          return res.status(400).json({ error: 'Invalid or missing image in multipart request' });
+        if (uploadErr) {
+          console.error('[Stream API] Multipart upload error:', uploadErr);
+          return res.status(400).json({
+            error: 'Invalid multipart request',
+            details: uploadErr.message
+          });
         }
         
+        // Validate required 'image' field
+        if (!req.file || !req.file.buffer) {
+          console.warn('[Stream API] Missing image field in multipart request');
+          return res.status(400).json({
+            error: 'Missing required field: image',
+            details: 'The multipart request must contain an image file'
+          });
+        }
+
         const timestamp = Date.now();
         const filename = `${deviceId}_${timestamp}.jpg`;
         const filePath = path.join(dataDir, filename);
 
         try {
+          // Add debug logging for file processing
+          console.debug('[Stream API] Processing uploaded image', {
+            filename,
+            size: req.file.buffer.length,
+            mimeType: req.file.mimetype
+          });
+
           await fsp.writeFile(filePath, req.file.buffer);
-          // Perform recognition in the background for multipart as well
+          
+          // Broadcast new frame message
           const newFrameMessage = {
             type: 'new_frame',
             deviceId, timestamp, filename,
             url: `/data/${filename}`,
-            recognition: { status: 'pending' } // Send pending status first
+            recognition: { status: 'pending' }
           };
           wss.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(newFrameMessage));
           });
 
-          dataStore.performFaceRecognition(req.file.buffer).then(recognitionResult => {
-            const recognitionCompleteMessage = {
+          // Handle face recognition in background
+          dataStore.performFaceRecognition(req.file.buffer)
+            .then(recognitionResult => {
+              const recognitionCompleteMessage = {
                 type: 'recognition_complete',
                 filename: filename,
                 recognition: recognitionResult
-            };
-            wss.clients.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionCompleteMessage));
+              };
+              wss.clients.forEach(client => {
+                if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionCompleteMessage));
+              });
+            })
+            .catch(recogErr => {
+              console.error(`[Recognition BG - Multipart] Error for ${filename}:`, recogErr);
+              // Broadcast recognition failure
+              const recognitionFailedMessage = {
+                type: 'recognition_failed',
+                filename: filename,
+                error: recogErr.message
+              };
+              wss.clients.forEach(client => {
+                if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(recognitionFailedMessage));
+              });
             });
-          }).catch(recogErr => console.error(`[Recognition BG - Multipart] Error for ${filename}:`, recogErr));
 
-          res.json({ message: 'JPEG frame received, recognition started.', filename });
+          res.json({
+            success: true,
+            message: 'JPEG frame received, recognition started.',
+            filename,
+            timestamp,
+            size: req.file.buffer.length
+          });
         } catch (procErr) {
           console.error('[Stream API] Error processing JPEG frame:', procErr);
-          res.status(500).json({ error: 'Failed to process JPEG frame', details: procErr.message });
+          // Broadcast processing failure
+          const processingFailedMessage = {
+            type: 'processing_failed',
+            filename: filename,
+            error: procErr.message
+          };
+          wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(processingFailedMessage));
+          });
+          
+          res.status(500).json({
+            success: false,
+            error: 'Failed to process JPEG frame',
+            details: procErr.message,
+            timestamp
+          });
         }
       });
     
