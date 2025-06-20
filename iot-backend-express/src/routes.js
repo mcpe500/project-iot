@@ -653,19 +653,6 @@ function setupRoutes(app, dataStore, wss) {
         altitude: sensorData.altitude,
         co2Level: sensorData.co2Level,
         customData: sensorData.customData
-      }, wss);
-
-      // Real-time WebSocket notification
-      const sensorMessage = {
-        type: 'sensor-data',
-        data: savedData,
-        timestamp: savedData.timestamp
-      };
-
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(sensorMessage));
-        }
       });
 
       addNoCacheHeaders(res);
