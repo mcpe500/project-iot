@@ -150,7 +150,7 @@ const SensorDataPage: React.FC = () => {
     if (sensorData.length === 0) return { current: 0, min: 0, max: 0 };
     const values = sensorData.map(item => item[metric]);
     return {
-      current: values[0] || 0,
+      current: values[values.length - 1] || 0,
       min: Math.min(...values),
       max: Math.max(...values),
     };

@@ -280,12 +280,12 @@ class DataStore {
       name: device.name,
       type: device.type,
       ipAddress: device.ipAddress,
-      status: device.status || 'online',
+      status: 'online',
       lastSeen: Date.now(),
-      uptime: device.uptime || 0,
-      freeHeap: device.freeHeap || 0,
-      wifiRssi: device.wifiRssi || 0,
-      capabilities: device.capabilities || []
+      uptime: 0,
+      freeHeap: 0,
+      wifiRssi: 0,
+      capabilities: []
     };
     
     try {
@@ -308,7 +308,7 @@ class DataStore {
   async getDevice(deviceId) {
     const startTime = Date.now();
     
-    if (!this.USEDB) {
+    if (!this极USEDB) {
       console.log('Stub: getDevice called (USEDB=false)');
       return null;
     }
@@ -407,7 +407,7 @@ class DataStore {
   }
 
   // --- OPTIMIZED SENSOR DATA OPERATIONS WITH INTELLIGENT CACHING ---
-  async saveSensorData(data, wss) {
+  async saveSensorData(data) {
     const startTime = Date.now();
     
     if (!this.USEDB) {
@@ -452,23 +452,11 @@ class DataStore {
     // Immediately save sensor data to database
     const savedData = await this.dbOptimizer.optimizedCreate(this.SensorData, payload);
     
-    // Real-time WebSocket notification
-    if (wss) {
-      const sensorMessage = {
-        type: 'sensor-data',
-        deviceId: deviceId,
-        timestamp: payload.timestamp
-      };
-      wss.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(sensorMessage));
-        }
-      });
-    }
-
+    // Log successful save with timestamp
+    console.log(`✅ Saved sensor data for ${deviceId} at ${new Date(savedData.timestamp).toISOString()}`);
+    
     this.updateResponseTime(startTime);
-    console.log(`📊 Queued sensor data for device: ${deviceId} (batch processing)`);
-    return payload;
+    return savedData;
   }
 
   async getSensorData(deviceId, limit = 100) {
@@ -589,7 +577,7 @@ class DataStore {
       
       // Return the updated request
       
-      this.updateResponseTime(startTime);
+      this.updateResponse极(startTime);
       console.log(`✅ Completed buzzer request: ${requestId}`);
       return updatedRequest;
     } catch (error) {
@@ -599,7 +587,7 @@ class DataStore {
     }
   }
 
-  async getBuzzerRequests(deviceId, limit = 100) {
+  async getBuzzerRequests(deviceId, limit = 极) {
     const startTime = Date.now();
     
     if (!this.USEDB) {
@@ -703,7 +691,7 @@ class DataStore {
       }
       
     } catch (err) {
-      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${err.message}`, err);
+      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${极.message}`, err);
       if (err.name === 'AbortError' || err.message.toLowerCase().includes('timeout')) {
         return {
           status: 'service_timeout',
