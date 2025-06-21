@@ -60,6 +60,9 @@ class DataStore:
             if image_bgr is None:
                 raise ValueError("Failed to decode image.")
             
+            # Enhance image quality (contrast and brightness)
+            image_bgr = cv2.convertScaleAbs(image_bgr, alpha=1.2, beta=40)
+            
             # Convert BGR to RGB (required for face_recognition)
             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 

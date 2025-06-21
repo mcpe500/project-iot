@@ -11,7 +11,7 @@ class DatabaseOptimizer {
     this.stats = {
       queriesExecuted: 0,
       batchedQueries: 0,
-      cacheHits: 0, // Disabled caching for sensor data
+      cacheHits: 0,
       optimizedQueries: 0,
       averageQueryTime: 0,
       totalQueryTime: 0
@@ -63,20 +63,18 @@ class DatabaseOptimizer {
     }
   }
 
-  // Optimized findOne with intelligent caching
+  // Optimized findOne
   async optimizedFindOne(model, options) {
-    // Add query optimization hints
     const optimizedOptions = {
       ...options,
-      raw: options.raw !== false, // Use raw by default for better performance
+      raw: options.raw !== false,
       benchmark: true,
-      logging: false // Disable logging for performance
+      logging: false
     };
-
     return await model.findOne(optimizedOptions);
   }
 
-  // Optimized findAll with smart limits and indexing
+  // Optimized findAll
   async optimizedFindAll(model, options) {
     const optimizedOptions = {
       ...options,
@@ -84,15 +82,10 @@ class DatabaseOptimizer {
       benchmark: true,
       logging: false
     };
-
-    // Add intelligent limits if not specified
     if (!optimizedOptions.limit && !optimizedOptions.offset) {
-      optimizedOptions.limit = 1000; // Prevent accidental full table scans
+      optimizedOptions.limit = 1000;
     }
-
-    // Optimize ordering for better index usage
     if (optimizedOptions.order && Array.isArray(optimizedOptions.order)) {
-      // Ensure proper index usage
       optimizedOptions.order = optimizedOptions.order.map(orderItem => {
         if (Array.isArray(orderItem) && orderItem.length === 2) {
           return [orderItem[0], orderItem[1].toUpperCase()];
@@ -100,59 +93,38 @@ class DatabaseOptimizer {
         return orderItem;
       });
     }
-
     return await model.findAll(optimizedOptions);
   }
 
-  // Optimized create with validation caching
+  // Optimized create
   async optimizedCreate(model, data) {
     const optimizedData = { ...data };
-    
-    // Remove undefined values to prevent SQL issues
     Object.keys(optimizedData).forEach(key => {
       if (optimizedData[key] === undefined) {
         delete optimizedData[key];
       }
     });
-
-    return await model.create(optimizedData, {
-      benchmark: true,
-      logging: false
-    });
+    return await model.create(optimizedData, { benchmark: true, logging: false });
   }
 
-  // Optimized update with smart WHERE clauses
+  // Optimized update
   async optimizedUpdate(model, data, options) {
-    const optimizedOptions = {
-      ...options,
-      benchmark: true,
-      logging: false
-    };
-
-    // Ensure WHERE clause exists to prevent accidental full table updates
+    const optimizedOptions = { ...options, benchmark: true, logging: false };
     if (!optimizedOptions.where || Object.keys(optimizedOptions.where).length === 0) {
       throw new Error('Update operation requires WHERE clause for safety');
     }
-
     return await model.update(data, optimizedOptions);
   }
 
-  // Optimized upsert with conflict resolution
+  // Optimized upsert
   async optimizedUpsert(model, data) {
     const optimizedData = { ...data };
-    
-    // Remove undefined values
     Object.keys(optimizedData).forEach(key => {
       if (optimizedData[key] === undefined) {
         delete optimizedData[key];
       }
     });
-
-    return await model.upsert(optimizedData, {
-      benchmark: true,
-      logging: false,
-      returning: true
-    });
+    return await model.upsert(optimizedData, { benchmark: true, logging: false, returning: true });
   }
 
   // High-performance bulk operations
@@ -160,78 +132,59 @@ class DatabaseOptimizer {
     if (!Array.isArray(dataArray) || dataArray.length === 0) {
       return [];
     }
-
-    // Clean data
     const cleanedData = dataArray.map(data => {
       const cleaned = { ...data };
       Object.keys(cleaned).forEach(key => {
-        if (cleaned[key] === undefined) {
-          delete cleaned[key];
-        }
+        if (cleaned[key] === undefined) delete cleaned[key];
       });
       return cleaned;
-    });    const optimizedOptions = {
+    });
+    const optimizedOptions = {
       ...options,
       benchmark: true,
       logging: false,
       ignoreDuplicates: options.ignoreDuplicates !== false
     };
-
-    // Only add updateOnDuplicate if it's provided and is a non-empty array
     if (options.updateOnDuplicate && Array.isArray(options.updateOnDuplicate) && options.updateOnDuplicate.length > 0) {
       optimizedOptions.updateOnDuplicate = options.updateOnDuplicate;
     }
-
-    // Split into smaller batches for very large operations
     const batchSize = options.batchSize || 1000;
     if (cleanedData.length > batchSize) {
       const results = [];
       for (let i = 0; i < cleanedData.length; i += batchSize) {
         const batch = cleanedData.slice(i, i + batchSize);
-        const batchResult = await model.bulkCreate(batch, optimizedOptions);
-        results.push(...batchResult);
+        results.push(...await model.bulkCreate(batch, optimizedOptions));
       }
       return results;
     }
-
     return await model.bulkCreate(cleanedData, optimizedOptions);
   }
 
-  // Batch query processor for high-throughput scenarios
+  // Batch query processor
   startBatchProcessor() {
     setInterval(() => {
       if (this.batchQueue.size > 0 && !this.isProcessingBatch) {
         this.processBatch();
       }
-    }, 50); // Process every 50ms
+    }, 50);
   }
 
   async processBatch() {
     if (this.isProcessingBatch || this.batchQueue.size === 0) return;
-    
     this.isProcessingBatch = true;
     const currentBatch = new Map(this.batchQueue);
     this.batchQueue.clear();
-
     try {
       const promises = [];
-      
       for (const [key, operations] of currentBatch) {
-        // Group similar operations for batch processing
         if (operations.length > 1 && operations[0].operation === 'update') {
-          // Batch updates
           promises.push(this.batchUpdateOperations(operations));
         } else if (operations.length > 1 && operations[0].operation === 'create') {
-          // Batch creates
           promises.push(this.batchCreateOperations(operations));
         } else {
-          // Execute individually
-          operations.forEach(op => {
-            promises.push(this.executeOperation(op));
-          });
+          operations.forEach(op => promises.push(this.executeOperation(op)));
         }
       }
-
       await Promise.all(promises);
       this.stats.batchedQueries += currentBatch.size;
     } catch (error) {
@@ -242,9 +195,7 @@ class DatabaseOptimizer {
   }
 
   async batchUpdateOperations(operations) {
-    // Group by model and merge data
     const modelGroups = new Map();
-    
     operations.forEach(op => {
       const modelName = op.model.name;
       if (!modelGroups.has(modelName)) {
@@ -252,22 +203,15 @@ class DatabaseOptimizer {
       }
       modelGroups.get(modelName).updates.push(op);
     });
-
     const promises = [];
     for (const [modelName, group] of modelGroups) {
-      // Execute batched updates
-      group.updates.forEach(update => {
-        promises.push(this.executeOperation(update));
-      });
+      group.updates.forEach(update => promises.push(this.executeOperation(update)));
     }
-
     return Promise.all(promises);
   }
 
   async batchCreateOperations(operations) {
-    // Group by model
     const modelGroups = new Map();
-    
     operations.forEach(op => {
       const modelName = op.model.name;
       if (!modelGroups.has(modelName)) {
@@ -275,14 +219,10 @@ class DatabaseOptimizer {
       }
       modelGroups.get(modelName).data.push(op.data);
     });
-
     const promises = [];
     for (const [modelName, group] of modelGroups) {
-      promises.push(
-        this.optimizedBulkCreate(group.model, group.data, { ignoreDuplicates: true })
-      );
+      promises.push(this.optimizedBulkCreate(group.model, group.data, { ignoreDuplicates: true }));
     }
-
     return Promise.all(promises);
   }
 
@@ -296,6 +236,7 @@ class DatabaseOptimizer {
     this.stats.queriesExecuted++;
     this.stats.totalQueryTime += queryTime;
     this.stats.averageQueryTime = this.stats.totalQueryTime / this.stats.queriesExecuted;
+    this.stats.optimizedQueries++;
   }
 
   getStats() {

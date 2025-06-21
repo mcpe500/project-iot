@@ -11,7 +11,8 @@ type IconName =
   | 'lan-connect' | 'lan-disconnect'
   | 'alert-circle-outline'
   | 'refresh'
-  | 'wifi-off'
+  | 'wifi-off' | 'server' | 'valve' | 'restart' | 'camera-iris' | 'bell'
+  | 'thermometer' | 'water' | 'ruler' | 'lightbulb-on-outline' | 'devices' | 'database-off'
   | string; // Allow any string as fallback
 
 const sfSymbolToIoniconsMap: Record<string, string> = {
@@ -26,10 +27,21 @@ const sfSymbolToIoniconsMap: Record<string, string> = {
   'video.fill': 'videocam',
   'video': 'videocam-outline',
   'lan-connect': 'wifi',
-  'lan-disconnect': 'wifi-off-outline',
+  'lan-disconnect': 'cellular-outline',
   'alert-circle-outline': 'alert-circle-outline',
   'refresh': 'refresh-outline',
-  'wifi-off': 'wifi-off'
+  'wifi-off': 'cellular-outline',
+  'server': 'server-outline',
+  'valve': 'water-outline',
+  'restart': 'refresh-circle-outline',
+  'camera-iris': 'camera-outline',
+  'bell': 'notifications-outline',
+  'thermometer': 'thermometer-outline',
+  'water': 'water-outline',
+  'ruler': 'resize-outline',
+  'lightbulb-on-outline': 'bulb-outline',
+  'devices': 'hardware-chip-outline',
+  'database-off': 'server-outline'
 };
 
 type Props = {

@@ -80,8 +80,12 @@ function setupRoutes(app, dataStore, wss) {
       });
       console.log(`[Stream API] Device ${deviceInfo.id} updated with status: ${registeredDevice.status}`);
 
-      // req.body is now the complete image buffer, thanks to express.raw()
-      await fsp.writeFile(filePath, req.body);
+      // Enhance image quality before processing
+      const enhancedBuffer = await sharp(req.body)
+        .jpeg({ quality: 90 })
+        .toBuffer();
+
+      await fsp.writeFile(filePath, enhancedBuffer);
 
       // --- Immediate broadcast for real-time streaming ---
       const newFrameMessage = {
@@ -101,16 +105,16 @@ function setupRoutes(app, dataStore, wss) {
       // Respond immediately for high FPS performance
       res.status(200).json({
         success: true,
-        message: 'Frame received successfully.',
+        message: 'Frame received and enhanced successfully.',
         filename,
         timestamp,
-        size: req.body.length,
+        size: enhancedBuffer.length,
         deviceStatus: registeredDevice ? registeredDevice.status : 'unknown'
       });
 
-      // Perform face recognition in the background (non-blocking)
+      // Perform face recognition on enhanced image
       setImmediate(() => {
-        dataStore.performFaceRecognition(req.body)
+        dataStore.performFaceRecognition(enhancedBuffer)
           .then(recognitionResult => {
             const recognitionCompleteMessage = {
               type: 'recognition_complete',
@@ -149,89 +153,69 @@ function setupRoutes(app, dataStore, wss) {
   });
 
 
-  // High-performance streaming endpoint for maximum FPS
+  // Maximum FPS streaming endpoint optimized for OV2640
   app.post('/api/v1/stream/fast', express.raw({
     type: 'image/jpeg',
-    limit: '10mb'
-  }), async (req, res) => {
+    limit: '20mb' // Support XGA resolution
+  }), (req, res) => {
     const deviceId = req.headers['device-id'] || 'unknown_device';
     const timestamp = Date.now();
     const filename = `${deviceId}_${timestamp}.jpg`;
 
-    // Quick validation
-    if (!req.body || req.body.length === 0) {
-      return res.status(400).json({ error: 'Empty image' });
+    console.log(`[FastStream] 📸 Received frame from ${deviceId}: ${req.body ? req.body.length : 0} bytes`);
+
+    // Lightning-fast validation
+    if (!req.body || req.body.length < 5000) {
+      console.log(`[FastStream] ❌ Invalid frame: ${req.body ? req.body.length : 0} bytes`);
+      res.writeHead(400);
+      res.end();
+      return;
     }
 
-    // Respond immediately for maximum FPS
-    res.status(200).json({
-      success: true,
-      filename,
-      timestamp,
-      fps_optimized: true
-    });
+    // Instant response - zero overhead
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{"success":true}');
+    console.log(`[FastStream] ✅ Response sent to ${deviceId}`);
 
-    // Handle everything else asynchronously
-    setImmediate(async () => {
-      try {
-        // Save file
-        const filePath = path.join(dataDir, filename);
-        await fsp.writeFile(filePath, req.body);
+    // Immediate async processing
+    setImmediate(() => {
+      // File save (non-blocking)
+      fsp.writeFile(path.join(dataDir, filename), req.body)
+        .then(() => console.log(`[FastStream] 💾 Saved ${filename}`))
+        .catch(err => console.log(`[FastStream] ❌ Save failed: ${err.message}`));
 
-        // Broadcast frame immediately
-        const frameMessage = {
-          type: 'new_frame',
-          deviceId,
-          timestamp,
-          filename,
-          url: `/data/${filename}`,
-          recognition: { status: 'pending' }
-        };
+      // Instant WebSocket broadcast
+      const msg = `{"type":"new_frame","deviceId":"${deviceId}","timestamp":${timestamp},"filename":"${filename}","url":"/data/${filename}","recognition":{"status":"pending"}}`;
+      wss.clients.forEach(client => {
+        if (client.readyState === 1) client.send(msg);
+      });
+      console.log(`[FastStream] 📡 Broadcasted to ${wss.clients.size} clients`);
 
-        wss.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(frameMessage));
-          }
-        });
+      // Background device update (every 10th frame)
+      if (Math.random() < 0.1) {
+        dataStore.registerDevice({
+          id: deviceId,
+          name: req.headers['device-name'] || 'OV2640-CAM',
+          type: 'ESP32-CAM',
+          ipAddress: req.headers['device-ip'] || '0.0.0.0',
+          status: 'online',
+          uptime: parseInt(req.headers['device-uptime']) || 0,
+          freeHeap: parseInt(req.headers['device-freeheap']) || 0,
+          wifiRssi: parseInt(req.headers['device-wifirssi']) || 0,
+          capabilities: ['camera', 'ov2640', 'high_fps']
+        }).catch(() => {});
+      }
 
-        // Update device status in background
-        if (deviceId !== 'unknown_device') {
-          const deviceInfo = {
-            id: deviceId,
-            name: req.headers['device-name'] || 'Fast Device',
-            type: req.headers['device-type'] || 'ESP32-CAM',
-            ipAddress: req.headers['device-ip'] || '0.0.0.0',
-            status: 'online',
-            uptime: parseInt(req.headers['device-uptime']) || 0,
-            freeHeap: parseInt(req.headers['device-freeheap']) || 0,
-            wifiRssi: parseInt(req.headers['device-wifirssi']) || 0,
-            capabilities: ['camera', 'image_capture', 'high_fps']
-          };
-
-          await dataStore.registerDevice(deviceInfo);
-        }
-
-        // Background face recognition (optional)
-        if (Math.random() < 0.3) { // Only process 30% of frames for face recognition
-          dataStore.performFaceRecognition(req.body)
-            .then(recognitionResult => {
-              const recogMessage = {
-                type: 'recognition_complete',
-                filename,
-                deviceId,
-                timestamp,
-                recognition: recognitionResult
-              };
-              wss.clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
-                  client.send(JSON.stringify(recogMessage));
-                }
-              });
-            })
-            .catch(err => console.error(`[FastStream] Recognition error:`, err.message));
-        }
-      } catch (error) {
-        console.error(`[FastStream] Background processing error:`, error.message);
+      // Face recognition (every 20th frame)
+      if (Math.random() < 0.05) {
+        dataStore.performFaceRecognition(req.body)
+          .then(result => {
+            const recogMsg = `{"type":"recognition_complete","filename":"${filename}","deviceId":"${deviceId}","timestamp":${timestamp},"recognition":${JSON.stringify(result)}}`;
+            wss.clients.forEach(client => {
+              if (client.readyState === 1) client.send(recogMsg);
+            });
+          })
+          .catch(() => {});
       }
     });
   });
@@ -500,10 +484,51 @@ function setupRoutes(app, dataStore, wss) {
     }
   });
 
-  // Optimized buzzer status endpoint with caching
-  app.get('/api/v1/buzzer/status/:deviceId?', async (req, res) => {
+  // ESP32 buzzer status endpoint - matches what ESP32 polls for
+  app.get('/api/v1/buzzer/status/:deviceId', async (req, res) => {
     const startTime = Date.now();
     const { deviceId } = req.params;
+
+    try {
+      await dataStore.dbReady;
+      
+      // Get the most recent pending buzzer request for this device
+      const request = await dataStore.dbOptimizer.optimizedFindOne(dataStore.BuzzerRequest, {
+        where: { 
+          deviceId: deviceId,
+          status: 'pending'
+        },
+        order: [['requestedAt', 'DESC']]
+      });
+
+      if (request) {
+        // Return pending status with request ID - match ESP32 expectations
+        addNoCacheHeaders(res);
+        res.json({
+          status: 'pending',
+          requestId: request.id.toString()
+        });
+      } else {
+        // No pending requests
+        addNoCacheHeaders(res);
+        res.json({
+          status: 'no_requests'
+        });
+      }
+    } catch (error) {
+      console.error('[API Error] /buzzer/status:', error);
+      res.status(500).json({
+        error: 'Failed to get buzzer status',
+        details: error.message,
+        responseTime: Date.now() - startTime
+      });
+    }
+  });
+
+  // Original buzzer status endpoint (for frontend compatibility)
+  app.get('/api/v1/buzzer/status', async (req, res) => {
+    const startTime = Date.now();
+    const { deviceId } = req.query;
 
     try {
       if (!deviceId) {
@@ -545,8 +570,12 @@ function setupRoutes(app, dataStore, wss) {
     const startTime = Date.now();
     const { id } = req.params;
 
+    console.log(`[Buzzer] Completion request received for ID: ${id}`);
+
     try {
       const request = await dataStore.completeBuzzerRequest(id);
+
+      console.log(`[Buzzer] Request ${id} completed successfully`);
 
       // Real-time notification
       if (request && request.deviceId) {
@@ -567,7 +596,7 @@ function setupRoutes(app, dataStore, wss) {
       addNoCacheHeaders(res);
       res.json({
         success: true,
-        ...request,
+        message: 'Buzzer request completed',
         responseTime: Date.now() - startTime
       });
     } catch (error) {
@@ -691,8 +720,6 @@ function setupRoutes(app, dataStore, wss) {
       const limitNum = limit ? Math.min(parseInt(limit, 10), 1000) : 100; // Cap at 1000 for performance
       const data = await dataStore.getSensorData(deviceId, limitNum);
 
-      // Disable caching and return fresh data
-      addNoCacheHeaders(res);
       res.json({
         success: true,
         data,

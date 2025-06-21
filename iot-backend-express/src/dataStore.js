@@ -308,7 +308,7 @@ class DataStore {
   async getDevice(deviceId) {
     const startTime = Date.now();
     
-    if (!this极USEDB) {
+    if (!this.USEDB) {
       console.log('Stub: getDevice called (USEDB=false)');
       return null;
     }
@@ -408,19 +408,9 @@ class DataStore {
 
   // --- OPTIMIZED SENSOR DATA OPERATIONS WITH INTELLIGENT CACHING ---
   async saveSensorData(data) {
-    const startTime = Date.now();
-    
-    if (!this.USEDB) {
-      console.log('Stub: saveSensorData called (USEDB=false)');
-      return { ...data, timestamp: Date.now() };
-    }
+    if (!this.USEDB) return { ...data, timestamp: Date.now() };
+    if (!data.deviceId) throw new Error('Device ID required');
 
-    const deviceId = data.deviceId;
-    if (!deviceId) {
-      throw new Error('Device ID is required for sensor data');
-    }
-
-    // Prepare sensor data payload
     const payload = {
       deviceId: data.deviceId,
       timestamp: data.timestamp || Date.now(),
@@ -430,57 +420,35 @@ class DataStore {
       lightLevel: data.lightLevel,
       pressure: data.pressure,
       altitude: data.altitude,
-      co2Level: data.co2Level,
-      customData: data.customData
+      co2Level: data.co2Level
     };
 
-    // Auto-register device if not already registered
-    const deviceData = {
-      id: deviceId,
-      name: data.deviceName || deviceId,
-      type: data.deviceType || 'sensor',
-      ipAddress: data.ipAddress || '',
+    // Queue device update
+    this.deviceUpdateQueue.set(data.deviceId, {
+      id: data.deviceId,
+      name: data.deviceName || data.deviceId,
+      type: 'sensor',
       status: 'online',
-      lastSeen: Date.now(),
-      uptime: 0,
-      freeHeap: 0,
-      wifiRssi: 0,
-      capabilities: []
-    };
-    this.deviceUpdateQueue.set(deviceId, deviceData);
+      lastSeen: Date.now()
+    });
 
-    // Immediately save sensor data to database
-    const savedData = await this.dbOptimizer.optimizedCreate(this.SensorData, payload);
-    
-    // Log successful save with timestamp
-    console.log(`✅ Saved sensor data for ${deviceId} at ${new Date(savedData.timestamp).toISOString()}`);
-    
-    this.updateResponseTime(startTime);
-    return savedData;
+    // Fast database insert
+    return await this.dbOptimizer.optimizedCreate(this.SensorData, payload);
   }
 
   async getSensorData(deviceId, limit = 100) {
-    const startTime = Date.now();
-    
-    if (!this.USEDB) {
-      console.log('Stub: getSensorData called (USEDB=false)');
-      return [];
-    }
-
+    if (!this.USEDB) return [];
     await this.dbReady;
     
     try {
-      const sensorData = await this.dbOptimizer.optimizedFindAll(this.SensorData, {
+      return await this.dbOptimizer.optimizedFindAll(this.SensorData, {
         where: { deviceId },
         order: [['timestamp', 'DESC']],
-        limit
+        limit: Math.min(limit, 500),
+        raw: true,
+        attributes: ['timestamp', 'temperature', 'humidity', 'distance', 'lightLevel']
       });
-      // Return the sensor data
-      this.updateResponseTime(startTime);
-      return sensorData;
     } catch (error) {
-      console.error('Error in getSensorData:', error);
-      this.updateResponseTime(startTime);
       return [];
     }
   }
@@ -498,20 +466,26 @@ class DataStore {
       throw new Error('Device ID is required');
     }
     
-    const requestData = {
-      deviceId,
-      requestedAt: Date.now(),
-      status: 'pending'
-    };
+    await this.dbReady;
     
-    // Queue for batch processing (high-throughput mode)
-    this.buzzerRequestQueue.push(requestData);
-    
-    // Return the request data
-    
-    this.updateResponseTime(startTime);
-    console.log(`🔔 Queued buzzer request for device: ${deviceId} (batch processing)`);
-    return requestData; // Return immediately without waiting for DB
+    try {
+      const requestData = {
+        deviceId,
+        requestedAt: Date.now(),
+        status: 'pending'
+      };
+      
+      // Save immediately to database for ESP32 polling
+      const savedRequest = await this.dbOptimizer.optimizedCreate(this.BuzzerRequest, requestData);
+      
+      this.updateResponseTime(startTime);
+      console.log(`🔔 Created buzzer request for device: ${deviceId} (ID: ${savedRequest.id})`);
+      return savedRequest;
+    } catch (error) {
+      console.error('Error creating buzzer request:', error);
+      this.updateResponseTime(startTime);
+      throw error;
+    }
   }
 
   async getBuzzerStatus(deviceId) {
@@ -573,11 +547,12 @@ class DataStore {
         throw new Error('Buzzer request not found');
       }
       
-      const updatedRequest = await this.dbOptimizer.optimizedFindByPk(this.BuzzerRequest, requestId);
+      const updatedRequest = await this.dbOptimizer.optimizedFindOne(this.BuzzerRequest, {
+        where: { id: requestId }
+      });
       
       // Return the updated request
-      
-      this.updateResponse极(startTime);
+      this.updateResponseTime(startTime);
       console.log(`✅ Completed buzzer request: ${requestId}`);
       return updatedRequest;
     } catch (error) {
@@ -587,7 +562,7 @@ class DataStore {
     }
   }
 
-  async getBuzzerRequests(deviceId, limit = 极) {
+  async getBuzzerRequests(deviceId, limit = 0) {
     const startTime = Date.now();
     
     if (!this.USEDB) {
@@ -691,7 +666,7 @@ class DataStore {
       }
       
     } catch (err) {
-      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${极.message}`, err);
+      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${err.message}`, err);
       if (err.name === 'AbortError' || err.message.toLowerCase().includes('timeout')) {
         return {
           status: 'service_timeout',
