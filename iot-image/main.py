@@ -98,6 +98,45 @@ async def health_check():
         "ssh_tunnel_active": tunnel.is_active if tunnel else False
     }
 
+# --- WebSocket Support ---
+from fastapi import WebSocket, WebSocketDisconnect
+import json
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"WebSocket disconnected. Total connections: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        if self.active_connections:
+            message_str = json.dumps(message)
+            for connection in self.active_connections.copy():
+                try:
+                    await connection.send_text(message_str)
+                except:
+                    self.active_connections.remove(connection)
+
+manager = ConnectionManager()
+
+@app.websocket("/")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
 # --- Main Execution ---
 if __name__ == "__main__":
     if not config.uvicorn_available:

@@ -66,9 +66,8 @@ class DataStore:
             # Convert BGR to RGB (required for face_recognition)
             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
-            # Fast face detection with smaller model for speed
-            # face_locations = face_recognition.face_locations(image_rgb, model="hog")  # HOG is faster than CNN
-            face_locations = face_recognition.face_locations(image_rgb, model="cnn")  # HOG is faster than CNN
+            # Fast face detection with CPU model to avoid CUDA issues
+            face_locations = face_recognition.face_locations(image_rgb, model="hog")  # HOG is CPU-only and faster
             if not face_locations:
                 processing_time = time.time() - start_time
                 return {

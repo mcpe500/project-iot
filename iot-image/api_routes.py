@@ -44,6 +44,18 @@ async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str]
     # Perform recognition asynchronously
     result = await data_store.perform_face_recognition(contents)
     result["deviceId"] = deviceId
+    
+    # Broadcast to WebSocket clients
+    from main import manager
+    await manager.broadcast({
+        "type": "new_frame",
+        "deviceId": deviceId,
+        "timestamp": int(time.time() * 1000),
+        "filename": f"{deviceId}_{int(time.time() * 1000)}.jpg",
+        "url": "/data/frame.jpg",
+        "recognition": result
+    })
+    
     return JSONResponse(content=result)
 
 
