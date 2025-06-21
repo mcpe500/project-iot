@@ -1,4 +1,5 @@
 # log_utils.py
+import asyncio
 import logging
 import functools
 import time
@@ -11,37 +12,50 @@ logger = logging.getLogger(__name__)
 def log_function_call(func: Callable) -> Callable:
     """
     Decorator to log function calls with parameters and execution time
+    Handles both sync and async functions
     """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        func_name = func.__name__
-        module_name = func.__module__
-        
-        # Format arguments for logging (excluding self if it's a method)
-        log_args = []
-        if args and hasattr(args[0], '__class__') and func.__qualname__.startswith(args[0].__class__.__name__):
-            # This is likely a method, so skip the first argument (self)
-            log_args = [repr(arg) for arg in args[1:]]
-        else:
-            log_args = [repr(arg) for arg in args]
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            func_name = func.__name__
+            module_name = func.__module__
             
-        log_kwargs = [f"{k}={repr(v)}" for k, v in kwargs.items()]
-        all_args = ", ".join(log_args + log_kwargs)
+            # Simple function call logging without detailed arguments to avoid serialization issues
+            logger.debug(f"CALL: {module_name}.{func_name}() - {len(args)} args, {len(kwargs)} kwargs")
+            
+            start_time = time.time()
+            try:
+                result = await func(*args, **kwargs)
+                elapsed = time.time() - start_time
+                logger.debug(f"RETURN: {module_name}.{func_name} completed in {elapsed:.6f}s")
+                return result
+            except Exception as e:
+                elapsed = time.time() - start_time
+                logger.error(f"ERROR: {module_name}.{func_name} failed after {elapsed:.6f}s: {str(e)}")
+                raise
         
-        logger.debug(f"CALL: {module_name}.{func_name}({all_args})")
+        return async_wrapper
+    else:
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            func_name = func.__name__
+            module_name = func.__module__
+            
+            # Simple function call logging without detailed arguments to avoid serialization issues
+            logger.debug(f"CALL: {module_name}.{func_name}() - {len(args)} args, {len(kwargs)} kwargs")
+            
+            start_time = time.time()
+            try:
+                result = func(*args, **kwargs)
+                elapsed = time.time() - start_time
+                logger.debug(f"RETURN: {module_name}.{func_name} completed in {elapsed:.6f}s")
+                return result
+            except Exception as e:
+                elapsed = time.time() - start_time
+                logger.error(f"ERROR: {module_name}.{func_name} failed after {elapsed:.6f}s: {str(e)}")
+                raise
         
-        start_time = time.time()
-        try:
-            result = func(*args, **kwargs)
-            elapsed = time.time() - start_time
-            logger.debug(f"RETURN: {module_name}.{func_name} completed in {elapsed:.6f}s")
-            return result
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.error(f"ERROR: {module_name}.{func_name} failed after {elapsed:.6f}s: {str(e)}")
-            raise
-    
-    return wrapper
+        return sync_wrapper
 
 def get_request_id(request: Optional[Request] = None) -> str:
     """

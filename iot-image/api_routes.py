@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import (APIRouter, File, Form, HTTPException, Request,
-                     UploadFile, Depends)
+                     UploadFile)
 from fastapi.responses import JSONResponse
 
 from config import DATA_DIR, PERMITTED_FACES_DIR, face_recognition_available
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/v1")
 
 @router.post("/devices/register")
 @log_function_call
-async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = Form(...), request: Request = None):
+async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = Form(...)):
     try:
         device_data = {'id': deviceId, 'name': deviceName, 'status': 'online'}
         registered_device = data_store.register_device(device_data)
@@ -29,7 +29,7 @@ async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = 
 
 @router.post("/stream/stream")
 @log_function_call
-async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown"), request: Request = None):
+async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown")):
     """
     High-speed streaming endpoint for ESP32-CAM integration.
     """
@@ -49,7 +49,7 @@ async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str]
 
 @router.post("/recognition/add-permitted-face")
 @log_function_call
-async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...), request: Request = None):
+async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...)):
     if not face_recognition_available:
         raise HTTPException(status_code=501, detail="Face recognition feature not available.")
 
@@ -71,7 +71,7 @@ async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...
 
 @router.post("/recognize")
 @log_function_call
-async def recognize_endpoint(image: UploadFile = File(...), request: Request = None):
+async def recognize_endpoint(image: UploadFile = File(...)):
     """
     Optimized endpoint for high-speed face recognition from the backend.
     """
