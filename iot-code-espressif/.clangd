@@ -1,3 +1,0 @@
-CompileFlags:
-  CompilationDatabase: D:\Data\VSCode\Internet Of Things\iot-code-espressif\build
-  Remove: [-m*, -f*]
