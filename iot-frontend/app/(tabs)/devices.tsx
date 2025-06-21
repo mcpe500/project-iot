@@ -115,8 +115,13 @@ export default function DevicesScreen() {
       console.log(`Sending command: ${command} to device ${deviceId} with params:`, params);
       
       if (command === 'buzzer_ping') {
-        await pingBuzzer(deviceId);
-        Alert.alert('Success', 'Ping sent to device');
+        // Use the buzzer request endpoint instead of ping
+        const response = await api.post('/api/v1/buzzer/request', { deviceId });
+        if (response.data.success) {
+          Alert.alert('Success', `Buzzer request sent to ${deviceId}`);
+        } else {
+          throw new Error(response.data.error || 'Failed to send buzzer request');
+        }
       } else {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         Alert.alert('Success', `Command "${command}" sent to device ${deviceId}.`);

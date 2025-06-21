@@ -38,8 +38,8 @@ Config config;
 
 // Default configuration values (matching .env.example)
 const Config defaultConfig = {
-  "BIZNET357",           // WIFI_SSID
-  "ivan4321",       // WIFI_PASSWORD  
+  "WIFI_SSID",           // WIFI_SSID
+  "WIFI_PASSWORD",       // WIFI_PASSWORD  
   "SERVER_IP",           // SERVER_IP
   9003,                      // SERVER_PORT
   "esp32-multi-sensor-1",    // DEVICE_ID
