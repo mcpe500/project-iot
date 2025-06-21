@@ -186,8 +186,46 @@ uvicorn main:app --reload --host 0.0.0.0 --port 9001
 
 ## Logs
 
-Service logs include:
+The service includes a comprehensive logging system with the following features:
+
+### Log Features
+- Beautiful, structured request/response logging with unique request IDs
+- Detailed performance metrics for each request
+- Visual indicators for request status (success, error, etc.)
+- Optional JSON logging format for machine parsing
+- File logging support
+- Function call tracing with execution times
+
+### Log Content
+- HTTP request/response details with timing information
 - SSH tunnel status and connections
-- Face recognition results
+- Face recognition results and confidence scores
 - Device registrations and heartbeats
-- Performance metrics
+- Performance metrics and system status
+- Error tracing with context
+
+### Log Configuration
+
+Configure logging behavior in the `.env` file:
+
+```
+# Logging Configuration
+LOG_LEVEL=INFO           # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_FORMAT=standard      # standard or json
+LOG_FILE=logs/iot-service.log  # Optional file path
+```
+
+### Sample Log Output
+
+```
+┌────────────────────────────────────────────────────
+│ 🚀 REQUEST 8f3d9a2e-1c5b-4f12-9c8a-7b5e8e3a7f9d - 2023-11-15 14:32:45.123
+│ POST /api/v1/recognize
+│ Client: 192.168.1.5 | Size: 24680B
+└────────────────────────────────────────────────────
+┌────────────────────────────────────────────────────
+│ ✅ RESPONSE 8f3d9a2e-1c5b-4f12-9c8a-7b5e8e3a7f9d - 2023-11-15 14:32:45.623
+│ 200 SUCCESS | POST /api/v1/recognize
+│ Processed in: 0.500s | Size: 256B
+└────────────────────────────────────────────────────
+```

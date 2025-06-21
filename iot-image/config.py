@@ -21,13 +21,41 @@ FACE_RECOGNITION_TIMEOUT = float(os.getenv('FACE_RECOGNITION_TIMEOUT', '3.0'))  
 
 # --- Logging Configuration ---
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_FORMAT = os.getenv("LOG_FORMAT", "standard").lower()
+LOG_FILE = os.getenv("LOG_FILE", "").strip()
+
+# Define log formats
+if LOG_FORMAT == "json":
+    log_format = "%(asctime)s %(levelname)s %(name)s %(message)s"
+    date_format = "%Y-%m-%dT%H:%M:%S%z"
+else:  # standard format
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+# Configure handlers
+log_handlers = [logging.StreamHandler(sys.stdout)]
+
+# Add file handler if LOG_FILE is specified
+if LOG_FILE:
+    log_dir = os.path.dirname(LOG_FILE)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setFormatter(logging.Formatter(log_format, date_format))
+    log_handlers.append(file_handler)
+
+# Configure logging
 logging.basicConfig(
     level=LOG_LEVEL,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format=log_format,
+    datefmt=date_format,
+    handlers=log_handlers
 )
+
+# Reduce verbosity of some loggers
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # --- Directory Paths ---
