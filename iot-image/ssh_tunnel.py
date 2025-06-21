@@ -68,12 +68,19 @@ class SSHTunnel:
             local_socket.connect(('127.0.0.1', self.private_server_port))
 
             def forward(src, dest, direction):
-                while True:
-                    data = src.recv(1024)
-                    if not data: break
-                    dest.sendall(data)
-                src.close()
-                dest.close()
+                try:
+                    while True:
+                        data = src.recv(1024)
+                        if not data: break
+                        dest.sendall(data)
+                except (socket.error, OSError):
+                    pass  # Connection closed, ignore
+                finally:
+                    try:
+                        src.close()
+                        dest.close()
+                    except:
+                        pass
 
             threading.Thread(target=forward, args=(channel, local_socket, "fwd"), daemon=True).start()
             threading.Thread(target=forward, args=(local_socket, channel, "rev"), daemon=True).start()
