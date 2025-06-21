@@ -67,7 +67,7 @@ class DataStore:
             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
             # GPU-accelerated face detection for speed and accuracy
-            face_locations = face_recognition.face_locations(image_rgb, model="cnn")  # CNN uses GPU for faster, more accurate detection
+            face_locations = face_recognition.face_locations(image_rgb, model="hog")  # CNN uses GPU for faster, more accurate detection
             if not face_locations:
                 processing_time = time.time() - start_time
                 return {
