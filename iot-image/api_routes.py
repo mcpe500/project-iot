@@ -5,18 +5,20 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import (APIRouter, File, Form, HTTPException, Request,
-                     UploadFile)
+                     UploadFile, Depends)
 from fastapi.responses import JSONResponse
 
 from config import DATA_DIR, PERMITTED_FACES_DIR, face_recognition_available
 from data_store import data_store
+from log_utils import log_function_call, setup_logger
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
 
 
 @router.post("/devices/register")
-async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = Form(...)):
+@log_function_call
+async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = Form(...), request: Request = None):
     try:
         device_data = {'id': deviceId, 'name': deviceName, 'status': 'online'}
         registered_device = data_store.register_device(device_data)
@@ -26,7 +28,8 @@ async def register_device_endpoint(deviceId: str = Form(...), deviceName: str = 
 
 
 @router.post("/stream/stream")
-async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown")):
+@log_function_call
+async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str] = Form("unknown"), request: Request = None):
     """
     High-speed streaming endpoint for ESP32-CAM integration.
     """
@@ -45,7 +48,8 @@ async def stream_endpoint(image: UploadFile = File(...), deviceId: Optional[str]
 
 
 @router.post("/recognition/add-permitted-face")
-async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...)):
+@log_function_call
+async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...), request: Request = None):
     if not face_recognition_available:
         raise HTTPException(status_code=501, detail="Face recognition feature not available.")
 
@@ -66,7 +70,8 @@ async def add_permitted_face(image: UploadFile = File(...), name: str = Form(...
     return JSONResponse(content={"success": True, "message": f"Permitted face '{name}' added."})
 
 @router.post("/recognize")
-async def recognize_endpoint(image: UploadFile = File(...)):
+@log_function_call
+async def recognize_endpoint(image: UploadFile = File(...), request: Request = None):
     """
     Optimized endpoint for high-speed face recognition from the backend.
     """

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 # Import from our new modules
 import config
@@ -13,6 +14,7 @@ from api_routes import router as api_router
 from data_store import data_store
 from ssh_tunnel import (create_ssh_tunnel, get_tunnel_instance,
                         stop_ssh_tunnel)
+from middleware import RequestLoggingMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,19 @@ app = FastAPI(
     docs_url="/docs" if config.RELOAD_DEBUG else None,
     redoc_url="/redoc" if config.RELOAD_DEBUG else None
 )
+
+# --- Add Middleware ---
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Add request logging middleware
+app.add_middleware(RequestLoggingMiddleware)
 
 # --- Global Exception Handler ---
 @app.exception_handler(Exception)
