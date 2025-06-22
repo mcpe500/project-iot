@@ -25,6 +25,7 @@ if (process.env.USEDB === 'true') {
 const DeviceModel = require('./models/Device');
 const SensorDataModel = require('./models/SensorData');
 const BuzzerRequestModel = require('./models/BuzzerRequest');
+const RecognitionRequestModel = require('./models/RecognitionRequest');
 
 async function createDatabaseIfNotExists() {
   const connection = await mysql.createConnection({
@@ -69,6 +70,7 @@ async function initializeDatabase() {
   const Device = DeviceModel(sequelize);
   const SensorData = SensorDataModel(sequelize);
   const BuzzerRequest = BuzzerRequestModel(sequelize);
+  const RecognitionRequest = RecognitionRequestModel(sequelize);
 
 
   // Try to sync models gracefully
@@ -84,6 +86,8 @@ async function initializeDatabase() {
       console.log('✅ SensorData model synchronized.');
       await BuzzerRequest.sync({ alter: false, force: false });
       console.log('✅ BuzzerRequest model synchronized.');
+      await RecognitionRequest.sync({ alter: false, force: false });
+      console.log('✅ RecognitionRequest model synchronized.');
     } catch (individualSyncError) {
       console.warn('⚠️  Individual sync also failed, continuing without sync...');
       console.warn('Database tables may need manual creation.');
@@ -120,6 +124,7 @@ module.exports = {
   Device: DeviceModel(sequelize),
   SensorData: SensorDataModel(sequelize),
   BuzzerRequest: BuzzerRequestModel(sequelize),
+  RecognitionRequest: RecognitionRequestModel(sequelize),
   initializeDatabase
   };
 } else {

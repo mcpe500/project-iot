@@ -13,6 +13,7 @@ const RECONNECT_DELAY_MS = 5000;
 interface FrameInfo {
   url: string;
   timestamp: number;
+  requestId?: string;
   recognition?: {
     status: string;
     recognizedAs?: string | null;
@@ -66,6 +67,7 @@ export default function LiveStreamScreen() {
           const newFrame = {
             url: newFrameUrl,
             timestamp: data.timestamp,
+            requestId: data.requestId,
             recognition: data.recognition,
           };
           // Preload the next image before switching
@@ -96,6 +98,15 @@ export default function LiveStreamScreen() {
 
           frameCountRef.current++;
           setLastFrameTime(Date.now());
+        } else if (data.type === 'recognition_result') {
+          // Update frame with recognition results by requestId
+          if (lastFrame && data.requestId === lastFrame.requestId) {
+            const updatedFrame = {
+              ...lastFrame,
+              recognition: data.recognition
+            };
+            setLastFrame(updatedFrame);
+          }
         } else if (data.type === 'connection' && data.status === 'connected') {
           console.log('WebSocket server confirmed connection.');
         }
@@ -227,17 +238,20 @@ export default function LiveStreamScreen() {
       case 'permitted_face': return styles.recognitionPermitted;
       case 'unknown_face': return styles.recognitionUnknown;
       case 'no_face_detected': return styles.recognitionNone;
-      default: return styles.recognitionError;
+      case 'error': return styles.recognitionError;
+      default: return styles.recognitionPending;
     }
   };
 
   const getRecognitionText = (recognition?: FrameInfo['recognition']) => {
     if (!recognition) return "Recognition: Pending...";
+    console.log('Recognition status:', recognition.status, 'Full recognition:', recognition);
     switch (recognition.status) {
       case 'permitted_face': return `Permitted: ${recognition.recognizedAs || 'Yes'}`;
       case 'unknown_face': return "Unknown Face Detected";
       case 'no_face_detected': return "No Face Detected";
-      default: return "Recognition Error";
+      case 'error': return "Recognition Error";
+      default: return `Status: ${recognition.status || 'Unknown'}`;
     }
   };
 

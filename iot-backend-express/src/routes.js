@@ -8,7 +8,7 @@ const os = require('os');
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
 const { dataDir, recordingsDir } = require('./dataStore');
-const { BuzzerRequest } = require('./database');
+const { BuzzerRequest, RecognitionRequest } = require('./database');
 
 // Multer configurations (still needed for other uploads)
 const permittedFaceUpload = multer({ storage: multer.memoryStorage() });
@@ -112,24 +112,43 @@ function setupRoutes(app, dataStore, wss) {
         deviceStatus: registeredDevice ? registeredDevice.status : 'unknown'
       });
 
-      // Perform face recognition on enhanced image
-      setImmediate(() => {
-        dataStore.performFaceRecognition(enhancedBuffer)
-          .then(recognitionResult => {
-            const recognitionCompleteMessage = {
-              type: 'recognition_complete',
-              filename: filename,
-              deviceId: deviceInfo.id,
-              timestamp,
-              recognition: recognitionResult
-            };
-            wss.clients.forEach(client => {
-              if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(recognitionCompleteMessage));
-              }
-            });
-          })
-          .catch(recogErr => console.error(`[Recognition BG] Error for ${filename}:`, recogErr));
+      // Create recognition request
+      setImmediate(async () => {
+        try {
+          const recognitionRequest = await RecognitionRequest.create({
+            filename,
+            deviceId: deviceInfo.id,
+            status: 'pending'
+          });
+
+          // Perform face recognition
+          const recognitionResult = await dataStore.performFaceRecognition(enhancedBuffer);
+          
+          // Update request with result
+          await recognitionRequest.update({
+            status: 'completed',
+            result: recognitionResult,
+            completedAt: new Date()
+          });
+
+          // Send updated frame with recognition results
+          const updatedFrameMessage = {
+            type: 'new_frame',
+            deviceId: deviceInfo.id,
+            timestamp,
+            filename,
+            url: `/data/${filename}`,
+            recognition: recognitionResult,
+            requestId: recognitionRequest.id
+          };
+          wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify(updatedFrameMessage));
+            }
+          });
+        } catch (recogErr) {
+          console.error(`[Recognition BG] Error for ${filename}:`, recogErr);
+        }
       });
 
     } catch (procErr) {
@@ -206,17 +225,31 @@ function setupRoutes(app, dataStore, wss) {
         }).catch(() => {});
       }
 
-      // Face recognition (every 20th frame)
-      if (Math.random() < 0.05) {
+      // Create recognition request and process
+      console.log(`[FastStream] 🔍 Starting face recognition for ${filename}`);
+      RecognitionRequest.create({
+        filename,
+        deviceId,
+        status: 'pending'
+      }).then(recognitionRequest => {
         dataStore.performFaceRecognition(req.body)
           .then(result => {
-            const recogMsg = `{"type":"recognition_complete","filename":"${filename}","deviceId":"${deviceId}","timestamp":${timestamp},"recognition":${JSON.stringify(result)}}`;
+            console.log(`[FastStream] ✅ Face recognition complete:`, result);
+            recognitionRequest.update({
+              status: 'completed',
+              result,
+              completedAt: new Date()
+            });
+            const updatedMsg = `{"type":"new_frame","deviceId":"${deviceId}","timestamp":${timestamp},"filename":"${filename}","url":"/data/${filename}","recognition":${JSON.stringify(result)},"requestId":"${recognitionRequest.id}"}`;
             wss.clients.forEach(client => {
-              if (client.readyState === 1) client.send(recogMsg);
+              if (client.readyState === 1) client.send(updatedMsg);
             });
           })
-          .catch(() => {});
-      }
+          .catch(err => {
+            console.log(`[FastStream] ❌ Face recognition failed:`, err.message);
+            recognitionRequest.update({ status: 'error', completedAt: new Date() });
+          });
+      }).catch(() => {});
     });
   });
 
@@ -936,6 +969,109 @@ function setupRoutes(app, dataStore, wss) {
     } catch (error) {
       console.error('[API Error] /system/performance:', error);
       res.status(500).json({ error: 'Failed to get performance metrics', details: error.message });
+    }
+  });
+
+  // Create recognition request endpoint
+  app.post('/api/v1/recognition/request', async (req, res) => {
+    const { filename, deviceId } = req.body;
+    if (!filename || !deviceId) {
+      return res.status(400).json({ error: 'filename and deviceId required' });
+    }
+    
+    try {
+      const request = await RecognitionRequest.create({
+        filename,
+        deviceId,
+        status: 'pending'
+      });
+      
+      res.json({ success: true, requestId: request.id, status: 'pending' });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to create recognition request' });
+    }
+  });
+
+  // Get recognition result endpoint
+  app.get('/api/v1/recognition/result/:requestId', async (req, res) => {
+    const { requestId } = req.params;
+    
+    try {
+      const request = await RecognitionRequest.findByPk(requestId);
+      if (!request) {
+        return res.status(404).json({ error: 'Request not found' });
+      }
+      
+      res.json({
+        success: true,
+        requestId: request.id,
+        status: request.status,
+        result: request.result,
+        requestedAt: request.requestedAt,
+        completedAt: request.completedAt
+      });
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to get recognition result' });
+    }
+  });
+
+  // Face recognition service test endpoint
+  app.get('/api/v1/recognition/test', async (req, res) => {
+    try {
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
+      
+      console.log(`[Recognition Test] Service URL: ${pythonServiceUrl}, Enabled: ${serviceEnabled}`);
+      
+      if (!serviceEnabled) {
+        return res.json({
+          success: false,
+          error: 'Face recognition service is disabled',
+          config: {
+            PYTHON_GPU_SERVICE_URL: pythonServiceUrl,
+            PYTHON_GPU_SERVICE_ENABLED: serviceEnabled
+          }
+        });
+      }
+
+      // Test connection to face recognition service
+      const { default: fetch } = await import('node-fetch');
+      const response = await fetch(`${pythonServiceUrl}/health`, {
+        method: 'GET',
+        timeout: 5000
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        res.json({
+          success: true,
+          message: 'Face recognition service is accessible',
+          serviceResponse: result,
+          config: {
+            PYTHON_GPU_SERVICE_URL: pythonServiceUrl,
+            PYTHON_GPU_SERVICE_ENABLED: serviceEnabled
+          }
+        });
+      } else {
+        res.json({
+          success: false,
+          error: `Service returned status ${response.status}`,
+          config: {
+            PYTHON_GPU_SERVICE_URL: pythonServiceUrl,
+            PYTHON_GPU_SERVICE_ENABLED: serviceEnabled
+          }
+        });
+      }
+    } catch (error) {
+      console.error('[Recognition Test] Error:', error);
+      res.json({
+        success: false,
+        error: error.message,
+        config: {
+          PYTHON_GPU_SERVICE_URL: process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001',
+          PYTHON_GPU_SERVICE_ENABLED: process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false'
+        }
+      });
     }
   });
 }

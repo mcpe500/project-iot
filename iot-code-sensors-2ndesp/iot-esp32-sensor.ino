@@ -1,9 +1,15 @@
+// Buzzer, HC-SR04, DHT11, and LDR Sensor Control for ESP32
+// WITH IoT Backend Integration using .env configuration
+
+// --- LIBRARIES ---
 #include <Ticker.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
 
+// --- HARDWARE PIN DEFINITIONS ---
 #define BUZZER_PIN 25
 #define BUZZER_POLL_INTERVAL 150  // Poll every 150ms
 #define TRIG_PIN 19
@@ -12,7 +18,10 @@
 #define DHT_TYPE DHT11
 #define LDR_PIN 32
 
+// --- GLOBAL OBJECTS AND VARIABLES ---
 
+// Persistent storage for configuration
+Preferences preferences;
 
 // Configuration Structure (.env compatible)
 struct Config {
@@ -146,8 +155,18 @@ void loop() {
 
 // --- Configuration Functions ---
 void loadConfig() {
-  // Use hardcoded default configuration
-  memcpy(&config, &defaultConfig, sizeof(Config));
+  preferences.begin("config", false);
+  
+  // Load configuration or use defaults (.env style)
+  strlcpy(config.wifiSsid, preferences.getString("WIFI_SSID", defaultConfig.wifiSsid).c_str(), sizeof(config.wifiSsid));
+  strlcpy(config.wifiPassword, preferences.getString("WIFI_PASSWORD", defaultConfig.wifiPassword).c_str(), sizeof(config.wifiPassword));
+  strlcpy(config.serverIp, preferences.getString("SERVER_IP", defaultConfig.serverIp).c_str(), sizeof(config.serverIp));
+  config.serverPort = preferences.getInt("SERVER_PORT", defaultConfig.serverPort);
+  strlcpy(config.deviceId, preferences.getString("DEVICE_ID", defaultConfig.deviceId).c_str(), sizeof(config.deviceId));
+  strlcpy(config.deviceName, preferences.getString("DEVICE_NAME", defaultConfig.deviceName).c_str(), sizeof(config.deviceName));
+  strlcpy(config.deviceType, preferences.getString("DEVICE_TYPE", defaultConfig.deviceType).c_str(), sizeof(config.deviceType));
+  
+  preferences.end();
   
   // Print loaded configuration
   Serial.println("=== Configuration Loaded ===");
@@ -162,7 +181,18 @@ void loadConfig() {
 }
 
 void saveConfig() {
-  Serial.println("Configuration changes are temporary (no persistent storage)!");
+  preferences.begin("config", false);
+  
+  preferences.putString("WIFI_SSID", config.wifiSsid);
+  preferences.putString("WIFI_PASSWORD", config.wifiPassword);
+  preferences.putString("SERVER_IP", config.serverIp);
+  preferences.putInt("SERVER_PORT", config.serverPort);
+  preferences.putString("DEVICE_ID", config.deviceId);
+  preferences.putString("DEVICE_NAME", config.deviceName);
+  preferences.putString("DEVICE_TYPE", config.deviceType);
+  
+  preferences.end();
+  Serial.println("Configuration saved to flash memory!");
 }
 
 void checkForConfigUpdate() {

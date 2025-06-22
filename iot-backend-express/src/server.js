@@ -104,8 +104,31 @@ wss.on('connection', (ws, request) => {
       if (data.type === 'ping') {
         ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
       }
+      
+      // Echo back any message for testing
+      if (data.type === 'test') {
+        ws.send(JSON.stringify({ 
+          type: 'test_response', 
+          originalMessage: data,
+          timestamp: Date.now(),
+          serverInfo: {
+            port: port,
+            connections: wsConnectionCount
+          }
+        }));
+      }
     } catch (error) {
       console.error('WebSocket message parse error:', error.message);
+      // Send error response
+      try {
+        ws.send(JSON.stringify({ 
+          type: 'error', 
+          message: 'Invalid JSON message',
+          timestamp: Date.now() 
+        }));
+      } catch (sendError) {
+        console.error('Failed to send error response:', sendError.message);
+      }
     }
   });
 
@@ -181,11 +204,12 @@ let server; // Declare server variable in module scope
     });
     
     // Start server with performance optimizations
-    server = app.listen(port, () => {
+    server = app.listen(port, '0.0.0.0', () => {
       console.log(`🌐 High-Performance IoT Backend running on port ${port}`);
       console.log(`📊 Database: ${dbStatus.version}`);
       console.log(`🚀 Optimizations: Caching, Batching, Compression enabled`);
       console.log(`💾 Memory usage: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`);
+      console.log(`📡 WebSocket server ready on ws://0.0.0.0:${port}/`);
     });
     
     // Configure server for high traffic
@@ -195,12 +219,31 @@ let server; // Declare server variable in module scope
     // Handle WebSocket upgrades with error handling
     server.on('upgrade', (request, socket, head) => {
       try {
+        // Log WebSocket upgrade attempts
+        console.log(`📡 WebSocket upgrade request from ${request.socket.remoteAddress}:${request.socket.remotePort}`);
+        console.log(`📡 WebSocket URL: ${request.url}`);
+        console.log(`📡 WebSocket headers:`, request.headers);
+        
         wss.handleUpgrade(request, socket, head, (ws) => {
           wss.emit('connection', ws, request);
         });
       } catch (error) {
         console.error('WebSocket upgrade error:', error);
         socket.destroy();
+      }
+    });
+    
+    // Add error handling for server
+    server.on('error', (error) => {
+      console.error('Server error:', error);
+    });
+    
+    // Log server listening
+    server.on('listening', () => {
+      console.log(`🌐 Server listening on all interfaces (0.0.0.0:${port})`);
+      console.log(`📡 WebSocket server ready for connections`);
+      if (process.env.PUBLIC_VPS_IP) {
+        console.log(`🔗 External WebSocket access: ws://${process.env.PUBLIC_VPS_IP}:${process.env.PUBLIC_PORT}/`);
       }
     });
 

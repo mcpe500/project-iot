@@ -246,6 +246,20 @@ export const requestBuzzer = async (deviceId: string, status: boolean): Promise<
   return api.post('/api/v1/buzzer/control', { deviceId, status });
 };
 
+export const createRecognitionRequest = async (filename: string, deviceId: string) => {
+  if (!filename || !deviceId) {
+    throw new Error('Filename and deviceId are required');
+  }
+  return api.post('/api/v1/recognition/request', { filename, deviceId });
+};
+
+export const getRecognitionResult = async (requestId: string) => {
+  if (!requestId) {
+    throw new Error('Request ID is required');
+  }
+  return api.get(`/api/v1/recognition/result/${requestId}`);
+};
+
 export const getBuzzerStatus = async (deviceId: string): Promise<BuzzerStatus> => {
   if (!deviceId) {
     throw new Error('Device ID is required');

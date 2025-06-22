@@ -443,7 +443,7 @@ class DataStore {
     try {
       return await this.dbOptimizer.optimizedFindAll(this.SensorData, {
         where: { deviceId },
-        order: [['timestamp', 'DESC']],
+        order: [['createdAt', 'DESC']],
         limit: Math.min(limit, 500),
         raw: true,
         attributes: ['timestamp', 'temperature', 'humidity', 'distance', 'lightLevel']
@@ -593,7 +593,10 @@ class DataStore {
     const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
     const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
 
+    console.log(`[Face Recognition] 🔍 Starting recognition - Service URL: ${pythonServiceUrl}, Enabled: ${serviceEnabled}`);
+
     if (!serviceEnabled) {
+      console.log(`[Face Recognition] ⚠️ Service disabled`);
       return {
         status: 'service_disabled',
         recognizedAs: null,
@@ -605,21 +608,27 @@ class DataStore {
       const FormData = require('form-data');
       const { default: fetch } = await import('node-fetch');
       
+      console.log(`[Face Recognition] 📷 Preparing image buffer (${imageBuffer.length} bytes)`);
+      
       const form = new FormData();
       form.append('image', imageBuffer, { 
         filename: 'frame.jpg',
         contentType: 'image/jpeg'
       });
 
+      console.log(`[Face Recognition] 🚀 Sending request to ${pythonServiceUrl}/api/v1/recognize`);
       const response = await fetch(`${pythonServiceUrl}/api/v1/recognize`, {
         method: 'POST',
         body: form,
         headers: form.getHeaders(),
-        timeout: 3000  // Reduced timeout for faster response
+        timeout: 5000  // Increased timeout for debugging
       });
+
+      console.log(`[Face Recognition] 📨 Response status: ${response.status}`);
 
       if (response.ok) {
         const result = await response.json();
+        console.log(`[Face Recognition] 📝 Response data:`, result);
         
         if (result.status === 'permitted_face' || (result.status === 'success' && result.recognized_faces && result.recognized_faces.length > 0)) {
           const faceName = result.recognizedAs || (result.recognized_faces && result.recognized_faces[0] ? result.recognized_faces[0].name : 'Unknown');
@@ -656,7 +665,7 @@ class DataStore {
         }
       } else {
         const errorBody = await response.text();
-        console.error(`[Face Recognition] Python service at ${pythonServiceUrl}/recognize returned error ${response.status}: ${errorBody}`);
+        console.error(`[Face Recognition] ❌ Python service error ${response.status}: ${errorBody}`);
         return {
           status: 'service_error',
           recognizedAs: null,
@@ -666,7 +675,7 @@ class DataStore {
       }
       
     } catch (err) {
-      console.error(`[Face Recognition] Error calling Python GPU service at ${pythonServiceUrl}/recognize: ${err.message}`, err);
+      console.error(`[Face Recognition] ❌ Connection error: ${err.message}`);
       if (err.name === 'AbortError' || err.message.toLowerCase().includes('timeout')) {
         return {
           status: 'service_timeout',
