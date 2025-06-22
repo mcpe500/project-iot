@@ -108,7 +108,12 @@ const SensorDataPage: React.FC = () => {
       setLoading(true);
       try {
         const devResponse = await getDevices();
-        const deviceList = devResponse.data?.devices?.filter((d: any) => d.deviceType?.includes('sensor')) || [];
+        const deviceList = devResponse.data?.devices?.filter((d: any) => 
+          d.deviceType?.includes('sensor') || 
+          d.deviceType?.includes('DHT') || 
+          d.deviceType?.includes('HCSR04') ||
+          d.capabilities?.some((cap: string) => ['temperature', 'humidity', 'distance', 'lightLevel'].includes(cap))
+        ) || [];
         setDevices(deviceList);
         if (deviceList.length > 0) {
           setSelectedDevice(deviceList[0].deviceId);

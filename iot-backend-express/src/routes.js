@@ -175,40 +175,39 @@ function setupRoutes(app, dataStore, wss) {
   // Maximum FPS streaming endpoint optimized for OV2640
   app.post('/api/v1/stream/fast', express.raw({
     type: 'image/jpeg',
-    limit: '20mb' // Support XGA resolution
+    limit: '20mb'
   }), (req, res) => {
     const deviceId = req.headers['device-id'] || 'unknown_device';
     const timestamp = Date.now();
     const filename = `${deviceId}_${timestamp}.jpg`;
 
-    console.log(`[FastStream] 📸 Received frame from ${deviceId}: ${req.body ? req.body.length : 0} bytes`);
-
     // Lightning-fast validation
     if (!req.body || req.body.length < 5000) {
-      console.log(`[FastStream] ❌ Invalid frame: ${req.body ? req.body.length : 0} bytes`);
       res.writeHead(400);
       res.end();
       return;
     }
 
-    // Instant response - zero overhead
+    // Instant response
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"success":true}');
-    console.log(`[FastStream] ✅ Response sent to ${deviceId}`);
 
-    // Immediate async processing
+    // Immediate streaming broadcast (non-blocking)
     setImmediate(() => {
-      // File save (non-blocking)
-      fsp.writeFile(path.join(dataDir, filename), req.body)
-        .then(() => console.log(`[FastStream] 💾 Saved ${filename}`))
-        .catch(err => console.log(`[FastStream] ❌ Save failed: ${err.message}`));
+      // Save file
+      fsp.writeFile(path.join(dataDir, filename), req.body).catch(() => {});
 
-      // Instant WebSocket broadcast
-      const msg = `{"type":"new_frame","deviceId":"${deviceId}","timestamp":${timestamp},"filename":"${filename}","url":"/data/${filename}","recognition":{"status":"pending"}}`;
+      // Instant stream broadcast without recognition
+      const streamMsg = {
+        type: 'stream_frame',
+        deviceId,
+        timestamp,
+        filename,
+        url: `/data/${filename}`
+      };
       wss.clients.forEach(client => {
-        if (client.readyState === 1) client.send(msg);
+        if (client.readyState === 1) client.send(JSON.stringify(streamMsg));
       });
-      console.log(`[FastStream] 📡 Broadcasted to ${wss.clients.size} clients`);
 
       // Background device update (every 10th frame)
       if (Math.random() < 0.1) {
@@ -224,33 +223,42 @@ function setupRoutes(app, dataStore, wss) {
           capabilities: ['camera', 'ov2640', 'high_fps']
         }).catch(() => {});
       }
-
-      // Create recognition request and process
-      console.log(`[FastStream] 🔍 Starting face recognition for ${filename}`);
-      RecognitionRequest.create({
-        filename,
-        deviceId,
-        status: 'pending'
-      }).then(recognitionRequest => {
-        dataStore.performFaceRecognition(req.body)
-          .then(result => {
-            console.log(`[FastStream] ✅ Face recognition complete:`, result);
-            recognitionRequest.update({
-              status: 'completed',
-              result,
-              completedAt: new Date()
-            });
-            const updatedMsg = `{"type":"new_frame","deviceId":"${deviceId}","timestamp":${timestamp},"filename":"${filename}","url":"/data/${filename}","recognition":${JSON.stringify(result)},"requestId":"${recognitionRequest.id}"}`;
-            wss.clients.forEach(client => {
-              if (client.readyState === 1) client.send(updatedMsg);
-            });
-          })
-          .catch(err => {
-            console.log(`[FastStream] ❌ Face recognition failed:`, err.message);
-            recognitionRequest.update({ status: 'error', completedAt: new Date() });
-          });
-      }).catch(() => {});
     });
+
+    // Separate face recognition processing (every 5th frame to reduce load)
+    if (Math.random() < 0.2) {
+      setImmediate(async () => {
+        try {
+          const recognitionRequest = await RecognitionRequest.create({
+            filename,
+            deviceId,
+            status: 'pending'
+          });
+
+          const result = await dataStore.performFaceRecognition(req.body);
+          
+          await recognitionRequest.update({
+            status: 'completed',
+            result,
+            completedAt: new Date()
+          });
+
+          // Send recognition result separately
+          const recognitionMsg = {
+            type: 'recognition_result',
+            deviceId,
+            filename,
+            recognition: result,
+            requestId: recognitionRequest.id
+          };
+          wss.clients.forEach(client => {
+            if (client.readyState === 1) client.send(JSON.stringify(recognitionMsg));
+          });
+        } catch (err) {
+          console.log(`[FastStream] Recognition error:`, err.message);
+        }
+      });
+    }
   });
 
   // --- ALL OTHER ROUTES BELOW ARE UNCHANGED ---
@@ -384,18 +392,23 @@ function setupRoutes(app, dataStore, wss) {
     const startTime = Date.now();
     const device = req.body;
 
-    if (!device.deviceId || !device.deviceName || !device.deviceType) {
+    // Support both field name formats
+    const deviceId = device.deviceId || device.id;
+    const deviceName = device.deviceName || device.name;
+    const deviceType = device.deviceType || device.type;
+
+    if (!deviceId || !deviceName || !deviceType) {
       return res.status(400).json({
-        error: 'Missing required fields: deviceId, deviceName, deviceType',
+        error: 'Missing required fields: deviceId/id, deviceName/name, deviceType/type',
         responseTime: Date.now() - startTime
       });
     }
 
     try {
       const registeredDevice = await dataStore.registerDevice({
-        id: device.deviceId,
-        name: device.deviceName,
-        type: device.deviceType,
+        id: deviceId,
+        name: deviceName,
+        type: deviceType,
         ipAddress: device.ipAddress,
         status: 'online',
         capabilities: device.capabilities || []
@@ -1018,7 +1031,7 @@ function setupRoutes(app, dataStore, wss) {
   // Face recognition service test endpoint
   app.get('/api/v1/recognition/test', async (req, res) => {
     try {
-      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9009';
       const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
       
       console.log(`[Recognition Test] Service URL: ${pythonServiceUrl}, Enabled: ${serviceEnabled}`);
@@ -1068,7 +1081,7 @@ function setupRoutes(app, dataStore, wss) {
         success: false,
         error: error.message,
         config: {
-          PYTHON_GPU_SERVICE_URL: process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001',
+          PYTHON_GPU_SERVICE_URL: process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9009',
           PYTHON_GPU_SERVICE_ENABLED: process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false'
         }
       });

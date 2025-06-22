@@ -590,7 +590,7 @@ class DataStore {
 
   // --- FACE RECOGNITION (optimized for high FPS) ---
   async performFaceRecognition(imageBuffer) {
-    const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+    const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9009';
     const serviceEnabled = process.env.PYTHON_GPU_SERVICE_ENABLED !== 'false';
 
     console.log(`[Face Recognition] 🔍 Starting recognition - Service URL: ${pythonServiceUrl}, Enabled: ${serviceEnabled}`);
@@ -695,7 +695,7 @@ class DataStore {
     try {
       const FormData = require('form-data');
       const { default: fetch } = await import('node-fetch');
-      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9001';
+      const pythonServiceUrl = process.env.PYTHON_GPU_SERVICE_URL || 'http://localhost:9009';
       
       const form = new FormData();
       form.append('image', imageBuffer, {
